@@ -1,4 +1,5 @@
 const THREE = require('three');
+const SimplexNoise = require('simplex-noise');
 
 // Set the scene size.
 const WIDTH = window.innerWidth;
@@ -61,22 +62,44 @@ const data = new Float32Array(4 * dataTextureSize);
 
 const validTerrainX = [];
 
+/*
 for (let i = 11; i < 39; i++) {
   if (i === 20 || i === 21) {
     continue;
   }
   validTerrainX.push(i * xf);
 }
+*/
+validTerrain = [
+  [50, 757],
+  [366, 305],
+  [465, 305],
+  [495, 305],
+  [693, 237]
+];
 
+const sf = function(x, y) {
+  const scale = 4.0 * 1.0 / XSEGMENTS;
+  const ret = (simplex.noise2D(x * scale, y * scale) + 1.0) / 2.0;
+  return ret;
+};
+
+const simplex = new SimplexNoise();
 for (let i = 0; i < dataTextureSize; i++) {
 	const stride = i * 4;
 	//data[stride] = Math.floor(Math.random() * tilesX) * xf;
-	data[stride] = validTerrainX[Math.floor(Math.random() * validTerrainX.length)];
+	//data[stride] = validTerrainX[Math.floor(Math.random() * validTerrainX.length)];
+  const x = i % YSEGMENTS;
+  const y = i / YSEGMENTS;
+  const height = sf(x, y);
+  const tile = validTerrain[Math.floor(height * validTerrain.length)];
+	data[stride] = Math.ceil(tile[0] / tileSize) * xf;
+	data[stride + 1] = Math.ceil(tile[1] / tileSize) * yf;
 	//data[stride + 1] = (2 + Math.floor(Math.random() * 8)) * yf;
-	data[stride + 1] = 10 * yf;
+	//data[stride + 1] = 10 * yf;
 	//data[stride] = 0.0;
 	//data[stride + 1] = (Math.floor(500.0 / 32.0) - 1.0) * yf;
-	data[stride + 2] = 0;
+	data[stride + 2] = height;
 	data[stride + 3] = 0;
 }
 
@@ -100,7 +123,7 @@ texture.magFilter = THREE.LinearFilter;
 */
 texture.minFilter = THREE.NearestFilter;
 texture.magFilter = THREE.NearestFilter;
-texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+//texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
 // create the plane's material
 /*
@@ -111,12 +134,49 @@ const planeMaterial =
     });
 */
 const vertexShader = `
+  uniform float time;
+  uniform vec2 tileSizeOnTexture;
+  uniform vec2 segments;
+  uniform sampler2D mapIndex;
+  uniform sampler2D map;
+
+  varying vec3 vPosition;
+  varying vec3 vNormal;
   varying vec2 vUv;
 
   void main()
   {
     vUv = uv;
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+
+    vec3 pos = position;
+
+    pos = (modelMatrix * vec4(pos, 1.0)).xyz;
+
+    vec2 vuv = uv;
+    vec2 uvIndex = floor(vuv * segments) / segments + 0.5 / segments;
+    vec4 color = texture2D(mapIndex, uvIndex);
+    float hmul = 10.0;
+    pos.y += hmul * color.z;
+
+    vPosition = vec3(uv.x, color.z, uv.y);
+
+    vec2 dx = vec2(1.0, 0.0);
+    vec2 dy = vec2(0.0, 1.0);
+    uvIndex = (floor(vuv * segments) + dx) / segments + 0.5 / segments;
+    float h1 = hmul * texture2D(mapIndex, uvIndex).z;
+    uvIndex = (floor(vuv * segments) + dy) / segments + 0.5 / segments;
+    float h2 = hmul * texture2D(mapIndex, uvIndex).z;
+
+    //vNormal = normalize(vec3(0.0, 1.0, 0.0));
+    float hmfac = 1.0;
+    h1 *= hmfac;
+    h2 *= hmfac;
+    vec3 v1 = vec3(dx.x, h1, 0.0);
+    vec3 v2 = vec3(0.0, h2, dy.y);
+    vNormal = -normalize(cross(v1, v2));
+
+    vec4 mvPosition = viewMatrix * vec4(pos, 1.0);
+
     gl_Position = projectionMatrix * mvPosition;
   }
 `;
@@ -125,10 +185,23 @@ const fragmentShader = `
   uniform float time;
   uniform vec2 tileSizeOnTexture;
   uniform vec2 segments;
+  uniform vec2 mapSize;
   uniform sampler2D mapIndex;
   uniform sampler2D map;
 
+  varying vec3 vPosition;
+  varying vec3 vNormal;
   varying vec2 vUv;
+
+  float rand(vec2 co){
+    return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+  }
+
+  vec3 hsv2rgb(vec3 c) {
+    vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+  }
 
   vec4 getTilePixel(vec2 index, vec2 uvRel) {
     const vec2 tileSize = vec2(1.0 / 32.0);
@@ -178,7 +251,42 @@ const fragmentShader = `
 
     vec4 color = getTilePixel(index, uvRel);
 
-    return color;
+    float lightCount = 16.0;
+    vec4 lcolor = vec4(vec3(0.0), color.a);
+    float dirLight = max(0.0, dot(vNormal, normalize(vec3(-1.0, 1.0, -1.0)))) * 1.0;
+    const float r = 4.0;
+    for (float dx = -r; dx <= r; dx += 1.0) {
+      for (float dy = -r; dy <= r; dy += 1.0) {
+        vec3 floorPos = vPosition;
+        vec3 lightPos = vec3(0.0);
+        vec2 lightIndex = fract((vec2(dx, dy) + vec2(floor(floorPos.x * lightCount), floor(floorPos.z * lightCount))) / lightCount);
+        lightPos.xz = lightIndex;
+        //lightPos.xz *= mapSize;
+        //floorPos.xz *= mapSize;
+        for (float dz = 0.0; dz <= 2.0; dz += 0.5) {
+          //floorPos.y = dz - 0.1;
+          lightPos.y = 0.0 + dz;
+          vec3 lightDir = normalize(lightPos - floorPos);
+
+          float d = distance(lightPos, floorPos) * 2.0 / dz + 0.5;
+          float k = 4.0;
+          d = pow(d, k) * pow(6.0, k) * 1.0;
+          float light = max(0.0, dot(vNormal, lightDir)) / d;
+          vec2 rl = abs(lightIndex * 0.4902 + 0.4325);
+          //vec3 lightColor = abs(vec3(rand(1.9523 * rl), 1.0 * rand(0.24982 * rl), rand(1.324 * rl)));
+          vec3 lightColor = hsv2rgb(vec3(rand(rl), 1.0, 1.0));
+          lightColor.g *= 0.75;
+          vec3 newColor = (color.rgb * 2.0 + vec3(1.0)) * (vec3(2.0) + lightColor) * ((1.0 + 0.0 * dirLight) * (0.5e-5 + light));
+          lcolor.rgb += newColor * lightColor;
+        }
+      }
+    }
+    lcolor.rgb *= 20.0;
+    lcolor.rgb += color.rgb * pow(dirLight, 20.0) * 1.5;
+    float maxHeight = 2.0;
+    // lcolor.rgb += 0.5 * color.rgb * dirLight * (maxHeight - min(maxHeight, abs(maxHeight - vPosition.y)));
+
+    return lcolor;
   }
 
   void main( void ) {
@@ -235,7 +343,8 @@ const planeMaterial =
         //tileSizeOnTexture: { value: new THREE.Vector2(tileSize / textureWidth, tileSize / textureHeight) },
         tileSizeOnTexture: { value: new THREE.Vector2(tileSize / textureWidth, tileSize / textureHeight) },
         map: { value: texture },
-        mapIndex: { value: dataTexture }
+        mapIndex: { value: dataTexture },
+        mapSize: { value: new THREE.Vector2(SIZE, SIZE) }
       },
       vertexShader: vertexShader,
       fragmentShader: fragmentShader,
@@ -250,11 +359,12 @@ const plane = new THREE.Mesh(
   new THREE.PlaneBufferGeometry(
     SIZE,
     SIZE,
-    1.0,
-    1.0),
+    XSEGMENTS,
+    YSEGMENTS),
 
   planeMaterial);
 
+//plane.rotation.y = Math.PI / 2.0;
 plane.rotation.x = -Math.PI / 2.0;
 plane.rotation.z = -Math.PI / 2.0;
 
@@ -286,6 +396,7 @@ renderer.render(scene, camera);
 
 function update () {
   // Draw!
+  planeMaterial.uniforms.time.value = performance.now() / 2000.0;
   renderer.render(scene, camera);
 
   // Schedule the next frame.
