@@ -1,8 +1,8 @@
 const THREE = require('three');
 
 // Set the scene size.
-const WIDTH = 400;
-const HEIGHT = 300;
+const WIDTH = window.innerWidth;
+const HEIGHT = window.innerHeight;
 
 // Set some camera attributes.
 const VIEW_ANGLE = 45;
@@ -37,47 +37,52 @@ renderer.setSize(WIDTH, HEIGHT);
 container.appendChild(renderer.domElement);
 
 
-// create the sphere's material
-const sphereMaterial =
+// create the plane's material
+const planeMaterial =
   new THREE.MeshLambertMaterial(
     {
       color: 0xCC0000
     });
 
 
-// Set up the sphere vars
-const RADIUS = 50;
-const SEGMENTS = 16;
-const RINGS = 16;
+// Set up the plane vars
+const SIZE = 100;
+const XSEGMENTS = 16;
+const YSEGMENTS = 16;
 
 // Create a new mesh with
-// sphere geometry - we will cover
-// the sphereMaterial next!
-const sphere = new THREE.Mesh(
+// plane geometry - we will cover
+// the planeMaterial next!
+const plane = new THREE.Mesh(
 
-  new THREE.SphereGeometry(
-    RADIUS,
-    SEGMENTS,
-    RINGS),
+  new THREE.PlaneBufferGeometry(
+    SIZE,
+    SIZE,
+    XSEGMENTS,
+    YSEGMENTS),
 
-  sphereMaterial);
+  planeMaterial);
 
-// Move the Sphere back in Z so we
-// can see it.
-sphere.position.z = -300;
+plane.rotation.x = -Math.PI / 2.0;
+plane.rotation.z = -Math.PI / 2.0;
 
-// Finally, add the sphere to the scene.
-scene.add(sphere);
+// Finally, add the plane to the scene.
+scene.add(plane);
 
+camera.position.set(-100, 100, -100);
+camera.lookAt(plane.position);
+
+const ambient = new THREE.AmbientLight(0xFFFFFF);
+scene.add(ambient);
 
 // create a point light
 const pointLight =
   new THREE.PointLight(0xFFFFFF);
 
 // set its position
-pointLight.position.x = 10;
-pointLight.position.y = 50;
-pointLight.position.z = 130;
+pointLight.position.x = 0;
+pointLight.position.y = 0;
+pointLight.position.z = 0;
 
 // add to the scene
 scene.add(pointLight);
