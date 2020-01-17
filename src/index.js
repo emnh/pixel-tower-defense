@@ -40,8 +40,10 @@ container.appendChild(renderer.domElement);
 // Set up the plane vars
 const SIZE = 128;
 
-const XSEGMENTS = 64;
-const YSEGMENTS = 64;
+const XSEGMENTRES = 32;
+const YSEGMENTRES = 32;
+const XSEGMENTS = 32 * XSEGMENTRES;
+const YSEGMENTS = 32 * YSEGMENTRES;
 
 const tileSize = 32;
 
@@ -77,6 +79,13 @@ validTerrain = [
   [495, 305],
   [693, 237]
 ];
+/*
+for (let xi = 8; xi < 2048; xi += 32) {
+  for (let yi = 8; yi < 3040; yi += 32) {
+    validTerrain.push([xi, yi]);
+  }
+}
+*/
 
 const sf = function(x, y) {
   const scale = 4.0 * 1.0 / XSEGMENTS;
@@ -90,9 +99,14 @@ for (let i = 0; i < dataTextureSize; i++) {
 	//data[stride] = Math.floor(Math.random() * tilesX) * xf;
 	//data[stride] = validTerrainX[Math.floor(Math.random() * validTerrainX.length)];
   const x = i % YSEGMENTS;
-  const y = i / YSEGMENTS;
+  const y = Math.floor(i / YSEGMENTS);
+  const x2 = Math.floor(x * XSEGMENTS / XSEGMENTRES); // / (XSEGMENTS / XSEGMENTRES);
+  const y2 = Math.floor(y * YSEGMENTS / YSEGMENTRES); // / (YSEGMENTS / YSEGMENTRES);
   const height = sf(x, y);
+  const height2 = sf(x / YSEGMENTRES, y / YSEGMENTRES); //2 * (XSEGMENTS / XSEGMENTRES);
+  const height3 = sf(y / YSEGMENTRES, x / YSEGMENTRES); //2 * (YSEGMENTS / YSEGMENTRES);
   const tile = validTerrain[Math.floor(height * validTerrain.length)];
+  //const tile = [height2 * tilesX * tileSize, height3 * tilesY * tileSize];
 	data[stride] = Math.ceil(tile[0] / tileSize) * xf;
 	data[stride + 1] = Math.ceil(tile[1] / tileSize) * yf;
 	//data[stride + 1] = (2 + Math.floor(Math.random() * 8)) * yf;
@@ -137,6 +151,7 @@ const vertexShader = `
   uniform float time;
   uniform vec2 tileSizeOnTexture;
   uniform vec2 segments;
+  uniform vec2 segmentsRes;
   uniform sampler2D mapIndex;
   uniform sampler2D map;
 
@@ -153,27 +168,43 @@ const vertexShader = `
     pos = (modelMatrix * vec4(pos, 1.0)).xyz;
 
     vec2 vuv = uv;
-    vec2 uvIndex = floor(vuv * segments) / segments + 0.5 / segments;
+    vec2 sres = segments;
+    vec2 sres2 = segments * 1.0;
+    vec2 sres3 = sres2;
+    vec2 uvIndex = floor(vuv * sres) / sres + 0.5 / sres;
+    vec2 uvIndex2 = floor(vuv * sres2) / sres2 + 0.5 / sres2;
+
     vec4 color = texture2D(mapIndex, uvIndex);
-    float hmul = 10.0;
-    pos.y += hmul * color.z;
+    vec4 color2 = texture2D(mapIndex, uvIndex2);
+    float hmul = 6.0;
+    //float height = hmul * color.z;
+    float height = hmul * (color.z + color2.z);
+    float height2 = hmul * (color.z + color2.z);
+    pos.y += height2;
 
     vPosition = vec3(uv.x, color.z, uv.y);
 
     vec2 dx = vec2(1.0, 0.0);
     vec2 dy = vec2(0.0, 1.0);
-    uvIndex = (floor(vuv * segments) + dx) / segments + 0.5 / segments;
+    uvIndex = (floor(vuv * sres3) + dx) / sres3 + 0.5 / sres3;
     float h1 = hmul * texture2D(mapIndex, uvIndex).z;
-    uvIndex = (floor(vuv * segments) + dy) / segments + 0.5 / segments;
+    uvIndex = (floor(vuv * sres3) + dy) / sres3 + 0.5 / sres3;
     float h2 = hmul * texture2D(mapIndex, uvIndex).z;
 
     //vNormal = normalize(vec3(0.0, 1.0, 0.0));
     float hmfac = 1.0;
     h1 *= hmfac;
     h2 *= hmfac;
-    vec3 v1 = vec3(dx.x, h1, 0.0);
-    vec3 v2 = vec3(0.0, h2, dy.y);
-    vNormal = -normalize(cross(v1, v2));
+    vec3 v1 = vec3(dx.x, h1 - height , dx.y);
+    vec3 v2 = vec3(dy.x, h2 - height, dy.y);
+    vec3 v12 = vec3(dx.x, h1 , dx.y);
+    vec3 v22 = vec3(dy.x, h2, dy.y);
+    if (height / hmul < 0.5) {
+      vNormal = -normalize(cross(v12, v22));
+    } else {
+      vNormal = -normalize(cross(v1, v2));
+      // vNormal = -normalize(mix(cross(v12, v22), cross(v1, v2), height / hmul - 0.5));
+    }
 
     vec4 mvPosition = viewMatrix * vec4(pos, 1.0);
 
@@ -185,6 +216,7 @@ const fragmentShader = `
   uniform float time;
   uniform vec2 tileSizeOnTexture;
   uniform vec2 segments;
+  uniform vec2 segmentsRes;
   uniform vec2 mapSize;
   uniform sampler2D mapIndex;
   uniform sampler2D map;
@@ -235,9 +267,9 @@ const fragmentShader = `
   vec4 getTile(vec2 vuv) {
     const vec2 tileSize = vec2(1.0 / 32.0);
 
-    vec2 uvIndex = floor(vuv * segments) / segments;
+    vec2 uvIndex = floor(vuv * segmentsRes) / segmentsRes;
 
-    vec2 indexOffset = vec2(0.5) / segments;
+    vec2 indexOffset = vec2(0.5) / segmentsRes;
 
     vec2 uv = fract(vuv * segments);
 
@@ -339,7 +371,8 @@ const planeMaterial =
       uniforms: {
         time: { value: 1.0 },
         resolution: { value: new THREE.Vector2() },
-        segments: { value: new THREE.Vector2(XSEGMENTS, YSEGMENTS) },
+        segments: { value: new THREE.Vector2(XSEGMENTS / XSEGMENTRES, YSEGMENTS / YSEGMENTRES) },
+        segmentsRes: { value: new THREE.Vector2(XSEGMENTS, YSEGMENTS) },
         //tileSizeOnTexture: { value: new THREE.Vector2(tileSize / textureWidth, tileSize / textureHeight) },
         tileSizeOnTexture: { value: new THREE.Vector2(tileSize / textureWidth, tileSize / textureHeight) },
         map: { value: texture },
