@@ -301,7 +301,8 @@ const fragmentShader = `
 
     vec4 color = getTilePixel(index, uvRel);
 
-    float lightCount = 16.0;
+    const float lightSpeed = 2.0;
+    const float lightCount = 16.0;
     vec4 lcolor = vec4(vec3(0.0), color.a);
     float dirLight = max(0.0, (dot(vNormal, normalize(vec3(-1.0, 1.0, -1.0)))) * 1.0);
     const float r = 4.0;
@@ -310,15 +311,16 @@ const fragmentShader = `
         vec3 floorPos = vPosition;
         vec3 lightPos = vec3(0.0);
         vec2 lightIndex = fract((vec2(dx, dy) + vec2(floor(floorPos.x * lightCount), floor(floorPos.z * lightCount))) / lightCount);
-        lightPos.xz = lightIndex; // fract(lightIndex + (vec2(cos(time), sin(time))));
+        float t = lightSpeed * rand(lightIndex) * time;
+        lightPos.xz = lightIndex + vec2(cos(t), sin(t)) / lightCount;
         //lightPos.xz *= mapSize;
         //floorPos.xz *= mapSize;
         for (float dz = 0.0; dz <= 2.0; dz += 0.5) {
           //floorPos.y = dz - 0.1;
-          lightPos.y = 0.0 + dz + 0.25 * (sin(10.0 * rand(lightIndex) * time) + 1.0);
+          lightPos.y = dz + 0.25 * (sin(t) + 1.0);
           vec3 lightDir = length(lightPos - floorPos) > 0.0 ? normalize(lightPos - floorPos) : vec3(0.0);
 
-          float d = distance(lightPos, floorPos) * 2.0 / dz + 0.5;
+          float d = distance(lightPos, floorPos) * 2.0 / max(0.1, dz) + 0.5;
           float k = 4.0;
           d = pow(d, k) * pow(6.0, k) * 1.0;
           float light = max(0.0, dot(vNormal, lightDir)) / d;
