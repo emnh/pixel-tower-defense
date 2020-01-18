@@ -441,10 +441,12 @@ const protoBox =
 
 const geo = new THREE.Geometry();
 
+/*
 for (let i = 0; i < protoBox.faceVertexUvs[0].length; i++) {
   const uv = protoBox.faceVertexUvs[0][i];
   console.log(uv[0], uv[1], uv[2]);
 }
+*/
 
 const xMax = XSEGMENTS / XSEGMENTRES;
 const yMax = YSEGMENTS / YSEGMENTRES;
@@ -468,11 +470,12 @@ for (let x = 0; x <= xMax; x++) {
 
 const plane = new THREE.Mesh(geo, planeMaterial);
 
-//plane.rotation.x = -Math.PI / 2.0;
-//plane.rotation.z = -Math.PI / 2.0;
+plane2.rotation.x = -Math.PI / 2.0;
+plane2.rotation.z = -Math.PI / 2.0;
 
 // Finally, add the plane to the scene.
 scene.add(plane);
+//scene.add(plane2);
 
 const C = 25;
 camera.position.set(-C, C, -C);
