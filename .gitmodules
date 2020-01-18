@@ -1,3 +1,6 @@
 [submodule "art"]
 	path = art
 	url = https://github.com/emnh/pixel-tower-defense-art
+[submodule "dist/art"]
+	path = dist/art
+	url = https://github.com/emnh/pixel-tower-defense-art
