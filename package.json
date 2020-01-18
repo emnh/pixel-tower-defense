@@ -19,6 +19,9 @@
   },
   "homepage": "https://github.com/emnh/pixel-tower-defense#readme",
   "dependencies": {
+    "@babel/cli": "^7.8.3",
+    "@babel/core": "^7.8.3",
+    "@babel/preset-env": "^7.8.3",
     "simplex-noise": "^2.4.0",
     "three": "^0.112.1",
     "webpack": "^4.41.5",
