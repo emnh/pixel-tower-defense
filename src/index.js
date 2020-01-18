@@ -346,7 +346,7 @@ const fragmentShader = `
         }
       }
     }
-    lcolor.rgb *= 20.0;
+    lcolor.rgb *= 10.0;
     lcolor.rgb += color.rgb * pow(dirLight, 20.0) * 1.5;
     float maxHeight = 2.0;
     // lcolor.rgb += 0.5 * color.rgb * dirLight * (maxHeight - min(maxHeight, abs(maxHeight - vPosition.y)));
