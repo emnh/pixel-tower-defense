@@ -152,6 +152,7 @@ const vertexShader = `
   uniform vec2 tileSizeOnTexture;
   uniform vec2 segments;
   uniform vec2 segmentsRes;
+  uniform vec2 mapSize;
   uniform sampler2D mapIndex;
   uniform sampler2D map;
 
@@ -159,10 +160,12 @@ const vertexShader = `
   varying vec3 vNormal;
   varying vec2 vUv;
 
+  float rand(vec2 co){
+    return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+  }
+
   void main()
   {
-    vUv = uv;
-
     vec3 pos = position;
 
     pos = (modelMatrix * vec4(pos, 1.0)).xyz;
@@ -178,29 +181,42 @@ const vertexShader = `
     vec4 color2 = texture2D(mapIndex, uvIndex2);
     float hmul = 6.0;
     //float height = hmul * color.z;
+    //float height = hmul * (color.z + color2.z + fract(rand(uvIndex) * 4.0 * time));
     float height = hmul * (color.z + color2.z);
-    float height2 = hmul * (color.z + color2.z);
-    pos.y += height2;
+    // Lego
+    float legoHeight = 0.0;
+    float d = length(fract(uv * segments * 2.0) - vec2(0.5)) < length(vec2(0.25)) ? legoHeight : 0.0;
+    height += d;
+    pos.y += height;
 
-    vPosition = vec3(uv.x, color.z, uv.y);
+    vUv = uv;
+    //vUv.x += fract(pos.y / hmul * segments.x);
+    //vUv.y += fract(pos.y / hmul * segments.x);
+
+    vPosition = vec3(uv.x, color.z + legoHeight / hmul, uv.y);
+    // vPosition = vec3(pos.x * 2.0 / mapSize.x + 1.0, color.z + legoHeight / hmul, pos.z * 2.0 / mapSize.y + 1.0);
 
     vec2 dx = vec2(1.0, 0.0);
     vec2 dy = vec2(0.0, 1.0);
     uvIndex = (floor(vuv * sres3) + dx) / sres3 + 0.5 / sres3;
     float h1 = hmul * texture2D(mapIndex, uvIndex).z;
+    // Lego
+    float d1 = length(fract((uv + dx / mapSize * 2.0) * segments * 2.0) - vec2(0.5)) < length(vec2(0.25)) ? legoHeight : 0.0;
+    h1 += h1 * d1 * 3.0;
     uvIndex = (floor(vuv * sres3) + dy) / sres3 + 0.5 / sres3;
     float h2 = hmul * texture2D(mapIndex, uvIndex).z;
+    // Lego
+    float d2 = length(fract((uv + dy / mapSize * 2.0) * segments * 2.0) - vec2(0.5)) < length(vec2(0.25)) ? legoHeight : 0.0;
+    h2 += h2 * d2 * 3.0;
 
     //vNormal = normalize(vec3(0.0, 1.0, 0.0));
     float hmfac = 1.0;
-    h1 *= hmfac;
-    h2 *= hmfac;
-    vec3 v1 = vec3(dx.x, h1 - height , dx.y);
-    vec3 v2 = vec3(dy.x, h2 - height, dy.y);
+    vec3 v1 = vec3(dx.x, (h1 - height) * hmfac , dx.y);
+    vec3 v2 = vec3(dy.x, (h2 - height) * hmfac, dy.y);
     vec3 v12 = vec3(dx.x, h1 , dx.y);
     vec3 v22 = vec3(dy.x, h2, dy.y);
     if (height / hmul < 0.5) {
-      vNormal = -normalize(cross(v12, v22));
+      vNormal = -0.95 * normalize(cross(v12, v22));
     } else {
       vNormal = -normalize(cross(v1, v2));
       // vNormal = -normalize(mix(cross(v12, v22), cross(v1, v2), height / hmul - 0.5));
@@ -272,6 +288,8 @@ const fragmentShader = `
     vec2 indexOffset = vec2(0.5) / segmentsRes;
 
     vec2 uv = fract(vuv * segments);
+    // Fix vertical slopes
+    // uv.x = fract(uv + vPosition.y / 10.0 * segments).x;
 
     vec2 uvRel0to1 = uv;
 
@@ -285,20 +303,20 @@ const fragmentShader = `
 
     float lightCount = 16.0;
     vec4 lcolor = vec4(vec3(0.0), color.a);
-    float dirLight = max(0.0, dot(vNormal, normalize(vec3(-1.0, 1.0, -1.0)))) * 1.0;
+    float dirLight = max(0.0, (dot(vNormal, normalize(vec3(-1.0, 1.0, -1.0)))) * 1.0);
     const float r = 4.0;
     for (float dx = -r; dx <= r; dx += 1.0) {
       for (float dy = -r; dy <= r; dy += 1.0) {
         vec3 floorPos = vPosition;
         vec3 lightPos = vec3(0.0);
         vec2 lightIndex = fract((vec2(dx, dy) + vec2(floor(floorPos.x * lightCount), floor(floorPos.z * lightCount))) / lightCount);
-        lightPos.xz = lightIndex;
+        lightPos.xz = lightIndex; // fract(lightIndex + (vec2(cos(time), sin(time))));
         //lightPos.xz *= mapSize;
         //floorPos.xz *= mapSize;
         for (float dz = 0.0; dz <= 2.0; dz += 0.5) {
           //floorPos.y = dz - 0.1;
-          lightPos.y = 0.0 + dz;
-          vec3 lightDir = normalize(lightPos - floorPos);
+          lightPos.y = 0.0 + dz + 0.25 * (sin(10.0 * rand(lightIndex) * time) + 1.0);
+          vec3 lightDir = length(lightPos - floorPos) > 0.0 ? normalize(lightPos - floorPos) : vec3(0.0);
 
           float d = distance(lightPos, floorPos) * 2.0 / dz + 0.5;
           float k = 4.0;
@@ -308,7 +326,7 @@ const fragmentShader = `
           //vec3 lightColor = abs(vec3(rand(1.9523 * rl), 1.0 * rand(0.24982 * rl), rand(1.324 * rl)));
           vec3 lightColor = hsv2rgb(vec3(rand(rl), 1.0, 1.0));
           lightColor.g *= 0.75;
-          vec3 newColor = (color.rgb * 2.0 + vec3(1.0)) * (vec3(2.0) + lightColor) * ((1.0 + 0.0 * dirLight) * (0.5e-5 + light));
+          vec3 newColor = (color.rgb * 2.0 + vec3(1.0)) * (vec3(2.0) + lightColor) * ((1.0 + 1.0 * dirLight) * (1.5e-5 + light));
           lcolor.rgb += newColor * lightColor;
         }
       }
@@ -317,6 +335,7 @@ const fragmentShader = `
     lcolor.rgb += color.rgb * pow(dirLight, 20.0) * 1.5;
     float maxHeight = 2.0;
     // lcolor.rgb += 0.5 * color.rgb * dirLight * (maxHeight - min(maxHeight, abs(maxHeight - vPosition.y)));
+    //lcolor.rgb *= lcolor.rgb * dirLight;
 
     return lcolor;
   }
@@ -430,6 +449,8 @@ renderer.render(scene, camera);
 function update () {
   // Draw!
   planeMaterial.uniforms.time.value = performance.now() / 2000.0;
+  const c = 0.001;
+  plane.rotation.z += c;
   renderer.render(scene, camera);
 
   // Schedule the next frame.
