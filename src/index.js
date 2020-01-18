@@ -38,7 +38,7 @@ renderer.setSize(WIDTH, HEIGHT);
 container.appendChild(renderer.domElement);
 
 // Set up the plane vars
-const SIZE = 128;
+const SIZE = 32;
 
 const XSEGMENTRES = 32;
 const YSEGMENTRES = 32;
@@ -77,7 +77,8 @@ validTerrain = [
   [366, 305],
   [465, 305],
   [495, 305],
-  [693, 237]
+  [693, 237],
+  [1328, 464]
 ];
 /*
 for (let xi = 8; xi < 2048; xi += 32) {
@@ -114,7 +115,12 @@ for (let i = 0; i < dataTextureSize; i++) {
 	//data[stride] = 0.0;
 	//data[stride + 1] = (Math.floor(500.0 / 32.0) - 1.0) * yf;
 	data[stride + 2] = height;
-	data[stride + 3] = 0;
+  // Tile brightess
+  if (tile == validTerrain[0]) {
+    data[stride + 3] = 2.0;
+  } else {
+    data[stride + 3] = 1.0;
+  }
 }
 
 // used the buffer to create a DataTexture
@@ -155,10 +161,12 @@ const vertexShader = `
   uniform vec2 mapSize;
   uniform sampler2D mapIndex;
   uniform sampler2D map;
+  uniform float hmul;
 
   varying vec3 vPosition;
   varying vec3 vNormal;
   varying vec2 vUv;
+  varying vec2 vUvOffset;
 
   float rand(vec2 co){
     return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
@@ -168,45 +176,45 @@ const vertexShader = `
   {
     vec3 pos = position;
 
+    vec2 vuv = uv / segmentsRes + (pos.xz / mapSize + vec2(0.5));
+    vUvOffset = uv;
+    //vec2 buv = pos.xz / mapSize + vec2(0.5);
+
     pos = (modelMatrix * vec4(pos, 1.0)).xyz;
 
-    vec2 vuv = uv;
     vec2 sres = segments;
     vec2 sres2 = segments * 1.0;
     vec2 sres3 = sres2;
     vec2 uvIndex = floor(vuv * sres) / sres + 0.5 / sres;
     vec2 uvIndex2 = floor(vuv * sres2) / sres2 + 0.5 / sres2;
+    const float hmul2 = 5.0;
 
     vec4 color = texture2D(mapIndex, uvIndex);
     vec4 color2 = texture2D(mapIndex, uvIndex2);
-    float hmul = 6.0;
-    //float height = hmul * color.z;
-    //float height = hmul * (color.z + color2.z + fract(rand(uvIndex) * 4.0 * time));
-    float height = hmul * (color.z + color2.z);
+    float height = hmul2 * (color.z + color2.z);
     // Lego
     float legoHeight = 0.0;
-    float d = length(fract(uv * segments * 2.0) - vec2(0.5)) < length(vec2(0.25)) ? legoHeight : 0.0;
+    float d = length(fract(vuv * segments * 2.0) - vec2(0.5)) < length(vec2(0.25)) ? legoHeight : 0.0;
     height += d;
-    pos.y += height;
+    //pos.y += height;
+    height = pos.y;
 
-    vUv = uv;
-    //vUv.x += fract(pos.y / hmul * segments.x);
-    //vUv.y += fract(pos.y / hmul * segments.x);
+    vUv = vuv;
 
-    vPosition = vec3(uv.x, color.z + legoHeight / hmul, uv.y);
+    vPosition = vec3(vuv.x, height / hmul2 + legoHeight / hmul2, vuv.y);
     // vPosition = vec3(pos.x * 2.0 / mapSize.x + 1.0, color.z + legoHeight / hmul, pos.z * 2.0 / mapSize.y + 1.0);
 
     vec2 dx = vec2(1.0, 0.0);
     vec2 dy = vec2(0.0, 1.0);
-    uvIndex = (floor(vuv * sres3) + dx) / sres3 + 0.5 / sres3;
-    float h1 = hmul * texture2D(mapIndex, uvIndex).z;
+    uvIndex = (floor(vuv * sres3) + 32.0 * dx) / sres3 + 0.5 / sres3;
+    float h1 = hmul2 * texture2D(mapIndex, uvIndex).z;
     // Lego
-    float d1 = length(fract((uv + dx / mapSize * 2.0) * segments * 2.0) - vec2(0.5)) < length(vec2(0.25)) ? legoHeight : 0.0;
+    float d1 = length(fract((vuv + dx / mapSize * 2.0) * segments * 2.0) - vec2(0.5)) < length(vec2(0.25)) ? legoHeight : 0.0;
     h1 += h1 * d1 * 3.0;
-    uvIndex = (floor(vuv * sres3) + dy) / sres3 + 0.5 / sres3;
-    float h2 = hmul * texture2D(mapIndex, uvIndex).z;
+    uvIndex = (floor(vuv * sres3) + 32.0 * dy) / sres3 + 0.5 / sres3;
+    float h2 = hmul2 * texture2D(mapIndex, uvIndex).z;
     // Lego
-    float d2 = length(fract((uv + dy / mapSize * 2.0) * segments * 2.0) - vec2(0.5)) < length(vec2(0.25)) ? legoHeight : 0.0;
+    float d2 = length(fract((vuv + dy / mapSize * 2.0) * segments * 2.0) - vec2(0.5)) < length(vec2(0.25)) ? legoHeight : 0.0;
     h2 += h2 * d2 * 3.0;
 
     //vNormal = normalize(vec3(0.0, 1.0, 0.0));
@@ -215,12 +223,14 @@ const vertexShader = `
     vec3 v2 = vec3(dy.x, (h2 - height) * hmfac, dy.y);
     vec3 v12 = vec3(dx.x, h1 , dx.y);
     vec3 v22 = vec3(dy.x, h2, dy.y);
-    if (height / hmul < 0.5) {
+    /*
+    if (height / hmul2 < 0.5) {
       vNormal = -0.95 * normalize(cross(v12, v22));
     } else {
       vNormal = -normalize(cross(v1, v2));
-      // vNormal = -normalize(mix(cross(v12, v22), cross(v1, v2), height / hmul - 0.5));
     }
+    */
+    vNormal = -normalize(cross(v1, v2));
 
     vec4 mvPosition = viewMatrix * vec4(pos, 1.0);
 
@@ -240,6 +250,7 @@ const fragmentShader = `
   varying vec3 vPosition;
   varying vec3 vNormal;
   varying vec2 vUv;
+  varying vec2 vUvOffset;
 
   float rand(vec2 co){
     return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
@@ -288,6 +299,7 @@ const fragmentShader = `
     vec2 indexOffset = vec2(0.5) / segmentsRes;
 
     vec2 uv = fract(vuv * segments);
+    uv = vUvOffset;
     // Fix vertical slopes
     // uv.x = fract(uv + vPosition.y / 10.0 * segments).x;
 
@@ -295,11 +307,12 @@ const fragmentShader = `
 
     vec2 uvRel = uvRel0to1 * tileSizeOnTexture;
 
-    vec2 index = texture2D(mapIndex, uvIndex + indexOffset).xy;
+    vec4 index = texture2D(mapIndex, uvIndex + indexOffset);
     //index = vec2(0.0, 14.0) * tileSizeOnTexture;
     index.y = 1.0 - index.y;
 
-    vec4 color = getTilePixel(index, uvRel);
+    vec4 color = getTilePixel(index.xy, uvRel);
+    color.rgb *= index.w;
 
     const float lightSpeed = 2.0;
     const float lightCount = 16.0;
@@ -315,9 +328,9 @@ const fragmentShader = `
         lightPos.xz = lightIndex + vec2(cos(t), sin(t)) / lightCount;
         //lightPos.xz *= mapSize;
         //floorPos.xz *= mapSize;
-        for (float dz = 0.0; dz <= 2.0; dz += 0.5) {
+        for (float dz = 0.0; dz <= 2.0; dz += 1.0) {
           //floorPos.y = dz - 0.1;
-          lightPos.y = dz + 0.25 * (sin(t) + 1.0);
+          lightPos.y = dz + 0.15 * (sin(t) + 1.0);
           vec3 lightDir = length(lightPos - floorPos) > 0.0 ? normalize(lightPos - floorPos) : vec3(0.0);
 
           float d = distance(lightPos, floorPos) * 2.0 / max(0.1, dz) + 0.5;
@@ -386,11 +399,13 @@ const fragmentShader = `
   }
 `;
 
+const hmul = 4.0;
 const planeMaterial =
   new THREE.ShaderMaterial(
     {
       uniforms: {
         time: { value: 1.0 },
+        hmul: { value: hmul },
         resolution: { value: new THREE.Vector2() },
         segments: { value: new THREE.Vector2(XSEGMENTS / XSEGMENTRES, YSEGMENTS / YSEGMENTRES) },
         segmentsRes: { value: new THREE.Vector2(XSEGMENTS, YSEGMENTS) },
@@ -408,7 +423,7 @@ const planeMaterial =
 // Create a new mesh with
 // plane geometry - we will cover
 // the planeMaterial next!
-const plane = new THREE.Mesh(
+const plane2 = new THREE.Mesh(
 
   new THREE.PlaneBufferGeometry(
     SIZE,
@@ -418,14 +433,48 @@ const plane = new THREE.Mesh(
 
   planeMaterial);
 
-//plane.rotation.y = Math.PI / 2.0;
-plane.rotation.x = -Math.PI / 2.0;
-plane.rotation.z = -Math.PI / 2.0;
+const protoBox =
+  new THREE.BoxGeometry(
+      1.0, 1.0, 1.0,
+      //XSEGMENTRES, 1.0, YSEGMENTRES);
+      1.0, 1.0, 1.0);
+
+const geo = new THREE.Geometry();
+
+for (let i = 0; i < protoBox.faceVertexUvs[0].length; i++) {
+  const uv = protoBox.faceVertexUvs[0][i];
+  console.log(uv[0], uv[1], uv[2]);
+}
+
+const xMax = XSEGMENTS / XSEGMENTRES;
+const yMax = YSEGMENTS / YSEGMENTRES;
+for (let x = 0; x <= xMax; x++) {
+  for (let y = 0; y <= yMax; y++) {
+    for (let depth = 0; depth <= 2; depth++) {
+      const mesh = new THREE.Mesh(protoBox, planeMaterial);
+      mesh.position.x = x * SIZE / xMax - SIZE / 2.0;
+      mesh.position.y = depth + (hmul * sf(x * XSEGMENTRES, y * YSEGMENTRES));
+      mesh.position.z = y * SIZE / yMax - SIZE / 2.0;
+      mesh.scale.x = SIZE / xMax;
+      mesh.scale.y = 1.0;
+      mesh.scale.z = SIZE / yMax;
+      //mesh.rotation.x = -Math.PI / 2.0;
+      mesh.rotation.y = Math.PI / 2.0;
+      //mesh.rotation.z = -Math.PI / 2.0;
+      geo.mergeMesh(mesh);
+    }
+  }
+}
+
+const plane = new THREE.Mesh(geo, planeMaterial);
+
+//plane.rotation.x = -Math.PI / 2.0;
+//plane.rotation.z = -Math.PI / 2.0;
 
 // Finally, add the plane to the scene.
 scene.add(plane);
 
-const C = 100;
+const C = 25;
 camera.position.set(-C, C, -C);
 camera.lookAt(plane.position);
 
@@ -452,7 +501,7 @@ function update () {
   // Draw!
   planeMaterial.uniforms.time.value = performance.now() / 2000.0;
   const c = 0.001;
-  plane.rotation.z += c;
+  plane.rotation.y += c;
   renderer.render(scene, camera);
 
   // Schedule the next frame.
