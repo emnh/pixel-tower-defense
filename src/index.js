@@ -470,7 +470,7 @@ const main = function() {
         },
         vertexShader: unitShader.vertexShader,
         fragmentShader: unitShader.fragmentShader,
-        depthTest: false
+        depthTest: true
       });
 
 
@@ -549,7 +549,7 @@ const main = function() {
 
 
 
-  const sz2 = 1.0;
+  const sz2 = 0.5;
 
   const protoQuad =
     new THREE.PlaneGeometry(
@@ -580,8 +580,8 @@ const main = function() {
   lookMesh.lookAt(camera.position);
   */
 
-  for (let x = 0; x <= xMax; x += 2) {
-    for (let y = 0; y <= yMax; y += 2) {
+  for (let x = 0; x <= xMax; x += 1) {
+    for (let y = 0; y <= yMax; y += 1) {
       //const mesh = new THREE.Mesh(protoBox, planeMaterial);
       const mesh = new THREE.Mesh(protoQuad, new THREE.MeshLambertMaterial());
       mesh.position.x = (x - 0.0 / 2.0) * SIZE / xMax - SIZE / 2.0;
@@ -638,10 +638,11 @@ const main = function() {
   function update () {
     // Draw!
     const t = performance.now() / 100.0;
-    planeMaterial.uniforms.time.value = performance.now() / 2000.0;
-    const c = 0.01;
-    plane.rotation.y += c; // * Math.sin(t);
-    units.rotation.y += c; // * Math.sin(t);
+    planeMaterial.uniforms.time.value = performance.now() / 1000.0;
+    unitMaterial.uniforms.time.value = performance.now() / 1000.0;
+    const c = 0.001;
+    //plane.rotation.y += c; // * Math.sin(t);
+    //units.rotation.y += c; // * Math.sin(t);
     renderer.render(scene, camera);
 
     // Schedule the next frame.
