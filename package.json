@@ -22,6 +22,8 @@
     "@babel/cli": "^7.8.3",
     "@babel/core": "^7.8.3",
     "@babel/preset-env": "^7.8.3",
+    "base64-img": "^1.0.4",
+    "image-hash": "^3.5.1",
     "simplex-noise": "^2.4.0",
     "three": "^0.112.1",
     "webpack": "^4.41.5",
