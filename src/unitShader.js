@@ -4,6 +4,7 @@ export const vertexShader = `
   uniform vec2 segments;
   uniform vec2 segmentsRes;
   uniform vec2 mapSize;
+  uniform sampler2D heightIndex;
   uniform sampler2D mapIndex;
   uniform sampler2D map;
   uniform float hmul;
@@ -52,10 +53,42 @@ export const vertexShader = `
     rpos.y = rpos.y > 0.5 ? 1.0 : -1.0;
     rpos.z = rpos.z > 0.5 ? 1.0 : -1.0;
     */
+    float t = 4.0 * (time + rand(vuv));
+    if (rpos.z > 0.0) {
+      rpos.x += 0.03 * (sin(t));
+      rpos.z -= 0.03 * abs(cos(t));
+    } else {
+      t *= 2.0;
+      float t2 = fract(time) < 0.5 ? t : 0.0;
+      float t3 = fract(time) > 0.5 ? t : 0.0;
+      if (rpos.x > 0.0) {
+        rpos.z += 0.02 * sin(t);
+      } else {
+        rpos.z += 0.02 * cos(t);
+      }
+    }
     vec3 billboard = CameraRight * rpos.x * Size + CameraUp * rpos.z * Size;
     //vec3 fpos = floor(pos + 0.5) - vec3(0.25, 0.0, 0.25) + vec3(Size / 2.0 - 0.5, 0.0, Size / 2.0 - 0.5);
     vec3 fpos = floor(pos + 0.5) - vec3(0.25, 0.0, 0.25) + vec3(0.25, 0.0, 0.25);
+    float t4 = mod(time, 32.0);
+    if (fpos.z - t4 <= -16.0) {
+      fpos.z -= t4 - 32.0;
+    } else {
+      fpos.z -= t4;
+    }
     fpos.y = pos.y;
+
+    vec2 fuvA = floor(fpos.xz + 0.5) / mapSize + vec2(0.5);
+    vec2 uvIndexA = floor(fuvA * segments) / segments + 0.5 / segments;
+    vec4 colorA = texture2D(heightIndex, uvIndexA);
+    float heightA = 3.0 + hmul * colorA.z;
+
+    vec2 fuvB = floor(fpos.xz + vec2(0.5, 1.0)) / mapSize + vec2(0.5);
+    vec2 uvIndexB = floor(fuvB * segments) / segments + 0.5 / segments;
+    vec4 colorB = texture2D(heightIndex, uvIndexB);
+    float heightB = 3.0 + hmul * colorB.z;
+
+    fpos.y = mix(heightA, heightB, 2.0 * fract(fpos.z));
 
     // fpos.z = pos.z;
 

@@ -469,6 +469,7 @@ const main = function() {
           //tileSizeOnTexture: { value: new THREE.Vector2(tileSize / textureWidth, tileSize / textureHeight) },
           tileSizeOnTexture: { value: new THREE.Vector2(tileSize / textureWidth, tileSize / textureHeight) },
           map: { value: texture },
+          heightIndex: { value: dataTexture },
           mapIndex: { value: dataTextureUnits },
           mapSize: { value: new THREE.Vector2(SIZE, SIZE) }
         },
