@@ -33,7 +33,7 @@ export const vertexShader = `
     vec3 CameraRight = vec3(vMatrix[0][0], vMatrix[1][0], vMatrix[2][0]);
     vec3 CameraUp = vec3(vMatrix[0][1], vMatrix[1][1], vMatrix[2][1]);
 
-    float Size = 1.0; // + 0.2 * sin(10.0 * time);
+    float Size = 2.0; // + 0.2 * sin(10.0 * time);
 
     /*
     vec4 v1 = VP * vec4(Pos + CameraRight * 0.5 * Size + CameraUp * -0.5 * Size, 1.0);
@@ -53,7 +53,8 @@ export const vertexShader = `
     rpos.z = rpos.z > 0.5 ? 1.0 : -1.0;
     */
     vec3 billboard = CameraRight * rpos.x * Size + CameraUp * rpos.z * Size;
-    vec3 fpos = floor(pos + 0.5) - vec3(0.25, 0.0, 0.25);
+    //vec3 fpos = floor(pos + 0.5) - vec3(0.25, 0.0, 0.25) + vec3(Size / 2.0 - 0.5, 0.0, Size / 2.0 - 0.5);
+    vec3 fpos = floor(pos + 0.5) - vec3(0.25, 0.0, 0.25) + vec3(0.25, 0.0, 0.25);
     fpos.y = pos.y;
 
     // fpos.z = pos.z;

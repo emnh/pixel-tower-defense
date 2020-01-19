@@ -544,7 +544,7 @@ const main = function() {
 
 
 
-  const C = 25;
+  const C = 28;
   camera.position.set(-C, C, -C);
 
 
@@ -584,8 +584,8 @@ const main = function() {
   lookMesh.lookAt(camera.position);
   */
 
-  for (let x = 0; x <= xMax; x += 1) {
-    for (let y = 0; y <= yMax; y += 1) {
+  for (let x = 0; x <= xMax; x += 2) {
+    for (let y = 0; y <= yMax; y += 2) {
       //const mesh = new THREE.Mesh(protoBox, planeMaterial);
       const mesh = new THREE.Mesh(protoQuad, new THREE.MeshLambertMaterial());
       mesh.position.x = (x - 0.0 / 2.0) * SIZE / xMax - SIZE / 2.0;
@@ -618,7 +618,7 @@ const main = function() {
   scene.add(units);
 
 
-  camera.lookAt(plane.position);
+  camera.lookAt(new THREE.Vector3(plane.position.x, plane.position.y - 2, plane.position.z));
 
   const ambient = new THREE.AmbientLight(0xFFFFFF);
   //scene.add(ambient);
