@@ -218,17 +218,17 @@ const main = function() {
 
       vUv = vuv;
 
-      vPosition = vec3(vuv.x, height / hmul2 + legoHeight / hmul2, vuv.y);
+      vPosition = pos; // vec3(pos.x, height + legoHeight, pos.y);
       // vPosition = vec3(pos.x * 2.0 / mapSize.x + 1.0, color.z + legoHeight / hmul, pos.z * 2.0 / mapSize.y + 1.0);
 
       vec2 dx = vec2(1.0, 0.0);
       vec2 dy = vec2(0.0, 1.0);
-      uvIndex = (floor(vuv * sres3) + 32.0 * dx) / sres3 + 0.5 / sres3;
+      uvIndex = (floor(vuv * sres3) + 1.0 * dx) / sres3 + 0.5 / sres3;
       float h1 = hmul2 * texture2D(mapIndex, uvIndex).z;
       // Lego
       float d1 = length(fract((vuv + dx / mapSize * 2.0) * segments * 2.0) - vec2(0.5)) < length(vec2(0.25)) ? legoHeight : 0.0;
       h1 += h1 * d1 * 3.0;
-      uvIndex = (floor(vuv * sres3) + 32.0 * dy) / sres3 + 0.5 / sres3;
+      uvIndex = (floor(vuv * sres3) + 1.0 * dy) / sres3 + 0.5 / sres3;
       float h2 = hmul2 * texture2D(mapIndex, uvIndex).z;
       // Lego
       float d2 = length(fract((vuv + dy / mapSize * 2.0) * segments * 2.0) - vec2(0.5)) < length(vec2(0.25)) ? legoHeight : 0.0;
@@ -247,7 +247,8 @@ const main = function() {
         vNormal = -normalize(cross(v1, v2));
       }
       */
-      vNormal = -normalize(cross(v1, v2));
+      vNormal = normalize(cross(v1, v2));
+      vNormal += normal;
 
       // Hide gaps caused by anisotropy
       // pos -= 0.5 * sign(pos);
@@ -338,7 +339,9 @@ const main = function() {
       const float lightSpeed = 2.0;
       const float lightCount = 16.0;
       vec4 lcolor = vec4(vec3(0.0), color.a);
-      float dirLight = max(0.0, abs(dot(vNormal, normalize(vec3(-1.0, 1.0, -1.0)))));
+      float dirLight = max(0.0, (dot(vNormal, normalize(vec3(-0.65, 1.0, -0.65)))));
+      //dirLight *= (0.5 + ((sin(vPosition.x) + 1.0) / 2.0 + (sin(vPosition.z) + 1.0) / 2.0) / 2.0);
+      //dirLight /= pow(length(vPosition), 2.0) * 0.2;
       const float r = 1.0;
 
       /*
@@ -378,7 +381,8 @@ const main = function() {
       lcolor.rgb *= 40.0;
       lcolor.rgb += color.rgb * pow(dirLight, 20.0) * 1.5;
       */
-      lcolor.rgb += color.rgb * dirLight * 3.0;
+      // lcolor.rgb += color.rgb * pow(dirLight, 4.0) * 3.0 * 5.0;
+      lcolor.rgb += color.rgb * pow(dirLight, 1.0) * 1.5;
 
       float maxHeight = 2.0;
       // lcolor.rgb += 0.5 * color.rgb * dirLight * (maxHeight - min(maxHeight, abs(maxHeight - vPosition.y)));

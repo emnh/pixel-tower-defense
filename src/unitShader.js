@@ -62,6 +62,8 @@ export const vertexShader = `
 
     fpos = (modelMatrix * vec4(fpos, 1.0)).xyz;
 
+    vec4 zPos = projectionMatrix * viewMatrix * modelMatrix * vec4(fpos, 1.0);
+
     fpos += billboard;
 
     vec4 mvPosition = viewMatrix * vec4(fpos, 1.0);
@@ -69,6 +71,8 @@ export const vertexShader = `
     // mvPosition.xyz += (viewMatrix * vec4(billboard.xyz, 1.0)).xyz;
 
     gl_Position = projectionMatrix * mvPosition;
+
+    gl_Position.z -= zPos.z / zPos.w * gl_Position.w;
 
     // gl_Position.z -= 0.001 * gl_Position.w;
 
@@ -221,7 +225,8 @@ export const fragmentShader = `
     const float lightSpeed = 2.0;
     const float lightCount = 16.0;
     vec4 lcolor = vec4(vec3(0.0), color.a);
-    float dirLight = max(0.0, abs(dot(vNormal, normalize(vec3(-1.0, 1.0, -1.0)))));
+    vec3 normal = vec3(0.0, 0.0, -1.0);
+    float dirLight = max(0.0, (dot(normal, normalize(vec3(-1.0, 1.0, -1.0)))));
     const float r = 1.0;
 
     /*
@@ -261,7 +266,7 @@ export const fragmentShader = `
     lcolor.rgb *= 40.0;
     lcolor.rgb += color.rgb * pow(dirLight, 20.0) * 1.5;
     */
-    lcolor.rgb = color.rgb;
+    lcolor.rgb = color.rgb; // * dirLight * 2.0;
 
     float maxHeight = 2.0;
     // lcolor.rgb += 0.5 * color.rgb * dirLight * (maxHeight - min(maxHeight, abs(maxHeight - vPosition.y)));
