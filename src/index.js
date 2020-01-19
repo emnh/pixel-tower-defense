@@ -1,6 +1,7 @@
 const main = function() {
   const THREE = require('three');
   const SimplexNoise = require('simplex-noise');
+  const unitShader = require('./unitShader.js');
 
   // Set the scene size.
   const WIDTH = window.innerWidth;
@@ -46,6 +47,9 @@ const main = function() {
   const XSEGMENTS = 32 * XSEGMENTRES;
   const YSEGMENTS = 32 * YSEGMENTRES;
 
+  const XUNITS = 32;
+  const YUNITS = 32;
+
   const tileSize = 32;
 
   const textureWidth = 4096;
@@ -61,7 +65,9 @@ const main = function() {
 
   // Create a buffer with color data
   const dataTextureSize = XSEGMENTS * YSEGMENTS;
+  const dataTextureSizeUnits = XUNITS * YUNITS;
   const data = new Float32Array(4 * dataTextureSize);
+  const dataUnits = new Float32Array(4 * dataTextureSizeUnits);
 
   const validTerrainX = [];
 
@@ -90,7 +96,7 @@ const main = function() {
   */
 
   const sf = function(x, y) {
-    const scale = 4.0 * 1.0 / XSEGMENTS;
+    const scale = 2.0 * 1.0 / XSEGMENTS;
     const ret = (simplex.noise2D(x * scale, y * scale) + 1.0) / 2.0;
     return ret;
   };
@@ -116,18 +122,28 @@ const main = function() {
     //data[stride] = 0.0;
     //data[stride + 1] = (Math.floor(500.0 / 32.0) - 1.0) * yf;
     data[stride + 2] = height;
-    // Tile brightess
+    // Tile brightness
     if (tile == validTerrain[0]) {
-      data[stride + 3] = 2.0;
+      data[stride + 3] = 1.0;
     } else {
       data[stride + 3] = 1.0;
     }
+  }
+  
+  for (let i = 0; i < dataTextureSizeUnits; i++) {
+    const stride = i * 4;
+    dataUnits[stride] = Math.floor(Math.random() * tilesX) * xf;
+    // dataUnits[stride + 1] = Math.floor(Math.random() * tilesY) * yf;
+    dataUnits[stride + 1] = (60 + Math.floor(Math.random() * 10)) * yf;
   }
 
   // used the buffer to create a DataTexture
   const dataTexture = new THREE.DataTexture(data, XSEGMENTS, YSEGMENTS, THREE.RGBAFormat, THREE.FloatType);
   dataTexture.minFilter = THREE.NearestFilter;
   dataTexture.magFilter = THREE.NearestFilter;
+  const dataTextureUnits = new THREE.DataTexture(dataUnits, XUNITS, YUNITS, THREE.RGBAFormat, THREE.FloatType);
+  dataTextureUnits.minFilter = THREE.NearestFilter;
+  dataTextureUnits.magFilter = THREE.NearestFilter;
   //dataTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
   const texture = new THREE.TextureLoader().load('art/images/ProjectUtumno_full_4096.png' );
@@ -233,6 +249,9 @@ const main = function() {
       */
       vNormal = -normalize(cross(v1, v2));
 
+      // Hide gaps caused by anisotropy
+      // pos -= 0.5 * sign(pos);
+
       vec4 mvPosition = viewMatrix * vec4(pos, 1.0);
 
       gl_Position = projectionMatrix * mvPosition;
@@ -315,18 +334,27 @@ const main = function() {
       vec4 color = getTilePixel(index.xy, uvRel);
       color.rgb *= index.w;
 
+
       const float lightSpeed = 2.0;
       const float lightCount = 16.0;
       vec4 lcolor = vec4(vec3(0.0), color.a);
-      float dirLight = max(0.0, (dot(vNormal, normalize(vec3(-1.0, 1.0, -1.0)))) * 1.0);
+      float dirLight = max(0.0, abs(dot(vNormal, normalize(vec3(-1.0, 1.0, -1.0)))));
       const float r = 1.0;
+
+      /*
       for (float dx = -r; dx <= r; dx += 1.0) {
         for (float dy = -r; dy <= r; dy += 1.0) {
           vec3 floorPos = vPosition;
           vec3 lightPos = vec3(0.0);
-          vec2 lightIndex = fract((vec2(dx, dy) + vec2(floor(floorPos.x * lightCount), floor(floorPos.z * lightCount))) / lightCount);
+          vec2 lightIndex =
+            fract(
+              (vec2(dx, dy) +
+               vec2(
+                 floor(floorPos.x * lightCount),
+                 floor(floorPos.z * lightCount)) / lightCount));
+          // lightIndex = vec2(rand(lightIndex), rand(lightIndex.yx));
           float t = lightSpeed * rand(lightIndex) * time;
-          lightPos.xz = lightIndex + vec2(cos(t), sin(t)) / lightCount;
+          lightPos.xz += lightIndex + vec2(cos(t), sin(t)) / lightCount;
           //lightPos.xz *= mapSize;
           //floorPos.xz *= mapSize;
           for (float dz = 1.0; dz <= 1.0; dz += 1.0) {
@@ -349,6 +377,9 @@ const main = function() {
       }
       lcolor.rgb *= 40.0;
       lcolor.rgb += color.rgb * pow(dirLight, 20.0) * 1.5;
+      */
+      lcolor.rgb += color.rgb * dirLight * 3.0;
+
       float maxHeight = 2.0;
       // lcolor.rgb += 0.5 * color.rgb * dirLight * (maxHeight - min(maxHeight, abs(maxHeight - vPosition.y)));
       //lcolor.rgb *= lcolor.rgb * dirLight;
@@ -417,9 +448,31 @@ const main = function() {
           mapSize: { value: new THREE.Vector2(SIZE, SIZE) }
         },
         vertexShader: vertexShader,
-        fragmentShader: fragmentShader,
-        transparent: true
+        fragmentShader: fragmentShader
       });
+
+
+
+  const unitMaterial =
+    new THREE.ShaderMaterial(
+      {
+        uniforms: {
+          time: { value: 1.0 },
+          hmul: { value: hmul },
+          resolution: { value: new THREE.Vector2() },
+          segments: { value: new THREE.Vector2(XUNITS, YUNITS) },
+          segmentsRes: { value: new THREE.Vector2(XUNITS, YUNITS) },
+          //tileSizeOnTexture: { value: new THREE.Vector2(tileSize / textureWidth, tileSize / textureHeight) },
+          tileSizeOnTexture: { value: new THREE.Vector2(tileSize / textureWidth, tileSize / textureHeight) },
+          map: { value: texture },
+          mapIndex: { value: dataTextureUnits },
+          mapSize: { value: new THREE.Vector2(SIZE, SIZE) }
+        },
+        vertexShader: unitShader.vertexShader,
+        fragmentShader: unitShader.fragmentShader,
+        depthTest: false
+      });
+
 
   // Create a new mesh with
   // plane geometry - we will cover
@@ -434,9 +487,12 @@ const main = function() {
 
     new THREE.MeshLambertMaterial());
 
+
+  const sz = 1.0;
+
   const protoBox =
     new THREE.BoxGeometry(
-        1.0, 1.0, 1.0,
+        sz, sz, sz,
         //XSEGMENTRES, 1.0, YSEGMENTRES);
         1.0, 1.0, 1.0);
 
@@ -482,8 +538,82 @@ const main = function() {
   scene.add(plane);
   //scene.add(plane2);
 
+
+
   const C = 25;
   camera.position.set(-C, C, -C);
+
+
+
+  // Merge unit quads
+
+
+
+  const sz2 = 1.0;
+
+  const protoQuad =
+    new THREE.PlaneGeometry(
+        sz2, sz2,
+        1.0, 1.0);
+
+  /*
+  const protoMesh = new THREE.Mesh(protoQuad, new THREE.MeshBasicMaterial());
+  const protoQuad = new THREE.Geometry();
+  protoMesh.rotation.x = -Math.PI / 2.0;
+  protoMesh.rotation.z = -Math.PI / 2.0;
+  protoQuad.mergeMesh(protoMesh);
+  */
+
+  const geo2 = new THREE.Geometry();
+
+  /*
+  for (let i = 0; i < protoBox.faceVertexUvs[0].length; i++) {
+    const uv = protoBox.faceVertexUvs[0][i];
+    console.log(uv[0], uv[1], uv[2]);
+  }
+  */
+
+  // scene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 10), new THREE.MeshLambertMaterial()));
+
+  /*
+  const lookMesh = new THREE.Mesh(protoQuad, new THREE.MeshBasicMaterial());
+  lookMesh.lookAt(camera.position);
+  */
+
+  for (let x = 0; x <= xMax; x += 2) {
+    for (let y = 0; y <= yMax; y += 2) {
+      //const mesh = new THREE.Mesh(protoBox, planeMaterial);
+      const mesh = new THREE.Mesh(protoQuad, new THREE.MeshLambertMaterial());
+      mesh.position.x = (x - 0.0 / 2.0) * SIZE / xMax - SIZE / 2.0;
+      mesh.position.z = 3.0 + (hmul * sf(x * XSEGMENTRES, y * YSEGMENTRES));
+      mesh.position.y = (y - 0.0 / 2.0) * SIZE / yMax - SIZE / 2.0;
+      /*
+      mesh.scale.x = SIZE / xMax;
+      mesh.scale.y = 1.0;
+      mesh.scale.z = SIZE / yMax;
+      */
+      mesh.scale.x = 1.0;
+      mesh.scale.y = 1.0;
+      mesh.scale.z = 1.0;
+      /*
+      mesh.rotation.x = lookMesh.rotation.x;
+      mesh.rotation.y = lookMesh.rotation.y;
+      mesh.rotation.z = lookMesh.rotation.z;
+      */
+      // mesh.rotation.x = -Math.PI / 2.0;
+      // mesh.rotation.y = Math.PI / 2.0;
+      // mesh.rotation.z = -Math.PI / 2.0;
+      geo2.mergeMesh(mesh);
+    }
+  }
+
+
+  //const units = new THREE.Mesh(geo2, new THREE.MeshStandardMaterial());
+  const units = new THREE.Mesh(geo2, unitMaterial);
+
+  scene.add(units);
+
+
   camera.lookAt(plane.position);
 
   const ambient = new THREE.AmbientLight(0xFFFFFF);
@@ -507,9 +637,11 @@ const main = function() {
 
   function update () {
     // Draw!
+    const t = performance.now() / 100.0;
     planeMaterial.uniforms.time.value = performance.now() / 2000.0;
-    const c = 0.001;
-    plane.rotation.y += c;
+    const c = 0.01;
+    plane.rotation.y += c; // * Math.sin(t);
+    units.rotation.y += c; // * Math.sin(t);
     renderer.render(scene, camera);
 
     // Schedule the next frame.
@@ -523,5 +655,5 @@ const main = function() {
 try {
   main();
 } catch (error) {
-  document.body.innerHTML = error;
+  document.body.innerHTML = '<pre>' + error.stack + '</pre>';
 }
