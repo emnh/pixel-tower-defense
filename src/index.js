@@ -797,6 +797,52 @@ void main() {
 
   renderer.render(setup.scene, setup.camera);
 
+  // Actual testing
+  const rt = new THREE.WebGLRenderTarget(config.textureWidth, config.textureHeight);
+  const buffer = new Uint8Array(config.floatSize * dataTextureSize);
+
+  renderer.setRenderTarget(rt);
+  renderer.render(setup.scene, setup.camera);
+  renderer.readRenderTargetPixels(rt, 0, 0, config.textureWidth, config.textureHeight, buffer);
+
+  const testPixelEqual = function(bx, by, tr, tg, tb, ta) {
+    const stride = (by * config.textureHeight + bx) * config.floatSize;
+    const r = buffer[stride + 0];
+    const g = buffer[stride + 1];
+    const b = buffer[stride + 2];
+    const a = buffer[stride + 3];
+    const result =
+      "Pixel equality test:" +
+      "x: " + bx +
+      ", y: " + by +
+      ", r: " + r + " should be " + tr +
+      ", g: " + g + " should be " + tg +
+      ", b: " + b + " should be " + tb +
+      ", a: " + a + " should be " + ta;
+    const success =
+      r == tr &&
+      g == tg &&
+      b == tb &&
+      a == ta;
+    return {
+      text: result,
+      success: success
+    };
+  };
+
+  const testPixelEqualBuffer = function(bx, by) {
+    const stride = (by * config.textureHeight + bx) * config.floatSize;
+    const r = Math.floor(data[stride + 0] * 255);
+    const g = Math.floor(data[stride + 1] * 255);
+    const b = Math.floor(data[stride + 2] * 255);
+    const a = Math.floor(data[stride + 3] * 255);
+    return testPixelEqual(bx, by, r, g, b, a);
+  };
+
+  const bx = config.textureWidth * 0.5;
+  const by = config.textureHeight * 0.5;
+  const testResult = testPixelEqualBuffer(bx, by);
+
   // Note: must be done after render.
   setup.canvas.style =
     "width: " + config.testWidth + "px;" +
@@ -816,18 +862,23 @@ void main() {
 
   document.body.appendChild(groupResult);
 
-  const testResult = document.createElement('span');
-
-  groupResult.appendChild(testResult);
-
-  testResult.innerHTML = 'Test OK';
+  const testResultElement = document.createElement('span');
 
   const testResultIcon = document.createElement('img');
 
-  testResultIcon.src = "art/images/icons/ok.svg";
+  if (testResult.success) {
+    testResultElement.innerHTML = ' Test OK: ' + testResult.text;
+    testResultIcon.src = "art/images/icons/ok.svg";
+  } else {
+    testResultElement.innerHTML = ' Test FAIL: ' + testResult.text;
+    testResultIcon.src = "art/images/icons/fail.svg";
+  }
+
   testResultIcon.height = 20;
 
   groupResult.appendChild(testResultIcon);
+
+  groupResult.appendChild(testResultElement);
 
   const img = document.createElement('img');
 
@@ -836,6 +887,7 @@ void main() {
   img.src = dataURL;
   img.width = config.logWidth;
   img.height = config.logHeight;
+
 
   //renderer.setSize(config.testWidth, config.testHeight);
 };
