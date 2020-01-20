@@ -251,6 +251,25 @@ const main = function() {
     "23X7": "dungeon/water/shoals_shallow_water_disturbance_1_old",
   };
 
+  const sets = [
+    ["5X23","22X34","6X27","6X0","7X32","8X34"],  // sandstone
+    ["2X20","5X41","4X12","5X22","2X56","5X46"],  // dark
+    ["8X58","4X24","2X3","3X28","6X0","4X26"],    // acidic 2
+    ["5X15","22X55","7X32","4X38","4X50","6X29"], // arctic
+    ["5X61","6X26","22X15","2X37","9X40","8X34"], // green
+    ["6X11","3X19","2X36","6X29","8X49","21X21"], // cobble
+    ["21X47","6X60","22X58","2X8","6X31","22X37"],// oceanic
+    ["22X15","6X1","2X37","2X38","5X40","4X39"],  // green desert
+    ["22X9","9X23","4X9","9X1","9X2","9X35"],     // marble
+    ["23X7","7X42","7X32","3X62","8X37","5X35"],  // desert
+    ["21X47","9X16","9X11","8X52","3X44","2X2"],  // acidic
+    ["22X35","8X25","2X57","2X7","4X12","6X41"],  // darkgreen
+    ["21X21","8X25","4X11","6X45","6X41","2X26"], // lightgreen
+    ["22X37","2X9","3X61","5X47","5X37","6X19"],  // contrast
+    ["23X7","4X23","3X62","8X43","6X2","2X27"],   // limestone
+    ["22X37","3X20","5X40","9X23","5X13","5X48"]  // grass+dirt
+  ];
+
 
   /*
   for (let i = 11; i < 39; i++) {
@@ -269,17 +288,40 @@ const main = function() {
     [1328, 464]
   ];
 
+  const randomTerrain = false;
+
   let validTerrain = [];
   const keys = Object.keys(uniqueTerrain);
+  const uniqueWater = {};
+  const uniqueGround = {};
+  for (let i = 0; i < keys.length; i++) {
+    if (uniqueTerrain[keys[i]].includes('water')) {
+      uniqueWater[keys[i]] = uniqueTerrain[keys[i]];
+    } else {
+      uniqueGround[keys[i]] = uniqueTerrain[keys[i]];
+    }
+  }
+  const waterKeys = Object.keys(uniqueWater);
+  const groundKeys = Object.keys(uniqueGround);
+  const tset = [];
+  const choose = k => k[Math.floor(Math.random() * k.length)];
+  const chosenSet = choose(sets);
   for (let i = 0; i < 6; i++) {
-    const key = keys[Math.floor(Math.random() * keys.length)];
+    const key = 
+      randomTerrain ?
+        (i === 0 ?
+          choose(waterKeys) :
+          choose(groundKeys)) :
+        chosenSet[i];
     const xy = key.split("X");
     const y = parseInt(xy[0]);
     const x = parseInt(xy[1]);
     const p = [x * 32 + 1, y * 32 + 1];
+    tset.push(key);
     console.log(key, uniqueTerrain[key], p[0], p[1]);
     validTerrain.push(p);
   }
+  console.log(JSON.stringify(tset));
   /*
   for (let xi = 8; xi < 2048; xi += 32) {
     for (let yi = 8; yi < 3040; yi += 32) {
