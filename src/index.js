@@ -802,6 +802,22 @@ void main() {
     "width: " + config.testWidth + "px;" +
     "height: " + config.testHeight + "px;";
 
+  const dataURL = setup.canvas.toDataURL();
+
+  const h1 = document.createElement('h1');
+
+  document.body.appendChild(h1);
+
+  h1.innerHTML = 'Texture Render Test';
+
+  const img = document.createElement('img');
+
+  document.body.appendChild(img);
+
+  img.src = dataURL;
+  img.width = config.logWidth;
+  img.height = config.logHeight;
+
   //renderer.setSize(config.testWidth, config.testHeight);
 };
 
