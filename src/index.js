@@ -13,8 +13,8 @@ const config = {
   textureHeight: 4096,
   testWidth: 200,
   testHeight: 150,
-  logWidth: 800,
-  logHeight: 600
+  logWidth: 200,
+  logHeight: 150
 };
 
 const prelude = function() {
@@ -809,6 +809,25 @@ void main() {
   document.body.appendChild(h1);
 
   h1.innerHTML = 'Texture Render Test';
+
+  const groupResult = document.createElement('div');
+
+  groupResult.style = "display: inline; position: relative; top: -" + config.logHeight * 0.5 + "px;";
+
+  document.body.appendChild(groupResult);
+
+  const testResult = document.createElement('span');
+
+  groupResult.appendChild(testResult);
+
+  testResult.innerHTML = 'Test OK';
+
+  const testResultIcon = document.createElement('img');
+
+  testResultIcon.src = "art/images/icons/ok.svg";
+  testResultIcon.height = 20;
+
+  groupResult.appendChild(testResultIcon);
 
   const img = document.createElement('img');
 
