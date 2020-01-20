@@ -1,23 +1,31 @@
-const main = function() {
-  const THREE = require('three');
-  const SimplexNoise = require('simplex-noise');
-  const seedrandom = require('seedrandom');
-  const unitShader = require('./unitShader.js');
-  const bargeJSON = require('./barge.js').bargeJSON;
-  const uniqueTerrain = require('./uniqueTerrain.js').uniqueTerrain;
-  const sets = require('./terrainSets.js').terrainSets;
-  const heightMap = require('./heightMap.js').heightMap;
+const THREE = require('three');
+const SimplexNoise = require('simplex-noise');
+const seedrandom = require('seedrandom');
+const unitShader = require('./unitShader.js');
+const bargeJSON = require('./barge.js').bargeJSON;
+const uniqueTerrain = require('./uniqueTerrain.js').uniqueTerrain;
+const sets = require('./terrainSets.js').terrainSets;
+const heightMap = require('./heightMap.js').heightMap;
 
+const config = {
+  floatSize: 4,
+  textureWidth: 4096,
+  textureHeight: 4096,
+  testWidth: 200,
+  testHeight: 150,
+  logWidth: 800,
+  logHeight: 600
+};
+
+const prelude = function() {
   // Global PRNG: set Math.random.
   seedrandom('hello.', { global: true });
+};
 
-  // Set the scene size.
-  const WIDTH = window.innerWidth;
-  const HEIGHT = window.innerHeight;
-
+const setupRenderer = function(width, height, renderOpts) {
   // Set some camera attributes.
   const VIEW_ANGLE = 45;
-  const ASPECT = WIDTH / HEIGHT;
+  const ASPECT = width / height;
   const NEAR = 0.1;
   const FAR = 10000;
 
@@ -26,7 +34,7 @@ const main = function() {
 
   // Create a WebGL renderer, camera
   // and a scene
-  const renderer = new THREE.WebGLRenderer();
+  const renderer = new THREE.WebGLRenderer(renderOpts);
   const camera =
       new THREE.PerspectiveCamera(
           VIEW_ANGLE,
@@ -41,11 +49,28 @@ const main = function() {
   scene.add(camera);
 
   // Start the renderer.
-  renderer.setSize(WIDTH, HEIGHT);
+  renderer.setSize(width, height);
 
   // Attach the renderer-supplied
   // DOM element.
   container.appendChild(renderer.domElement);
+
+  return {
+    camera: camera,
+    container: container,
+    scene: scene,
+    renderer: renderer,
+    canvas: renderer.domElement
+  };
+};
+
+const main = function() {
+  prelude();
+
+  const setup = setupRenderer(window.innerWidth, window.innerHeight, {});
+  const camera = setup.camera;
+  const scene = setup.scene;
+  const renderer = setup.renderer;
 
   // Set up the plane vars
   const SIZE = 32;
@@ -60,8 +85,8 @@ const main = function() {
 
   const tileSize = 32;
 
-  const textureWidth = 4096;
-  const textureHeight = 4096;
+  const textureWidth = config.textureWidth;
+  const textureHeight = config.textureHeight;
 
   const xf = tileSize / textureWidth;
   const yf = tileSize / textureHeight;
@@ -74,29 +99,8 @@ const main = function() {
   // Create a buffer with color data
   const dataTextureSize = XSEGMENTS * YSEGMENTS;
   const dataTextureSizeUnits = XUNITS * YUNITS;
-  const data = new Float32Array(4 * dataTextureSize);
-  const dataUnits = new Float32Array(4 * dataTextureSizeUnits);
-
-  const validTerrainX = [];
-
-
-
-  /*
-  for (let i = 11; i < 39; i++) {
-    if (i === 20 || i === 21) {
-      continue;
-    }
-    validTerrainX.push(i * xf);
-  }
-  */
-  const validTerrain2 = [
-    [50, 757],
-    [366, 305],
-    [465, 305],
-    [495, 305],
-    [693, 237],
-    [1328, 464]
-  ];
+  const data = new Float32Array(config.floatSize * dataTextureSize);
+  const dataUnits = new Float32Array(config.floatSize * dataTextureSizeUnits);
 
   const randomTerrain = false;
 
@@ -133,13 +137,6 @@ const main = function() {
     validTerrain.push(p);
   }
   console.log(JSON.stringify(tset));
-  /*
-  for (let xi = 8; xi < 2048; xi += 32) {
-    for (let yi = 8; yi < 3040; yi += 32) {
-      validTerrain.push([xi, yi]);
-    }
-  }
-  */
 
   const sf2 = function(x, y) {
     const scale = 2.0 * 1.0 / XSEGMENTS;
@@ -729,8 +726,91 @@ const main = function() {
   requestAnimationFrame(update);
 };
 
+const test = function() {
+  prelude();
+
+  const width = config.textureWidth;
+  const height = config.textureHeight;
+  const setup = setupRenderer(width, height, { preserveDrawingBuffer: true });
+  const renderer = setup.renderer;
+
+  const dataTextureSize = width * height;
+  const data = new Float32Array(config.floatSize * dataTextureSize);
+
+  for (let i = 0; i < dataTextureSize; i++) {
+    const stride = i * config.floatSize;
+    const x = i % height;
+    const y = Math.floor(i / height);
+    data[stride] = x / width;
+    data[stride + 1] = y / height;
+    data[stride + 2] = 0;
+    data[stride + 3] = 1;
+  }
+
+  const dataTexture =
+    new THREE.DataTexture(data, config.textureWidth, config.textureHeight, THREE.RGBAFormat, THREE.FloatType);
+
+  const quad = new THREE.PlaneGeometry(2.0, 2.0);
+
+  const vertexShader = `
+void main() {
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+
+  const fragmentShader = `
+uniform vec2 resolution;
+uniform sampler2D texture;
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / resolution.xy;
+  vec4 color = texture2D(texture, uv);
+  gl_FragColor = color;
+}
+`;
+
+  const material =
+    new THREE.ShaderMaterial(
+      {
+        uniforms: {
+          resolution: { value: new THREE.Vector2(width, height) },
+          texture: { value: dataTexture }
+        },
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        depthWrite: false,
+        depthTest: false
+      }
+    );
+
+  const mesh = new THREE.Mesh(quad, material);
+
+  setup.scene.add(mesh);
+
+  const testBox = new THREE.BoxGeometry(2.0, 2.0);
+  const testMesh = new THREE.Mesh(testBox, new THREE.MeshBasicMaterial(0xFFFFFF));
+  setup.scene.add(testMesh);
+  setup.scene.add(new THREE.AmbientLight(0xFFFFFF));
+
+  setup.camera.position.z = 0;
+  setup.camera.lookAt(testMesh.position);
+
+  renderer.render(setup.scene, setup.camera);
+
+  // Note: must be done after render.
+  setup.canvas.style =
+    "width: " + config.testWidth + "px;" +
+    "height: " + config.testHeight + "px;";
+
+  //renderer.setSize(config.testWidth, config.testHeight);
+};
+
 try {
-  main();
+  if (window.location.href.includes("#test")) {
+    test();
+  } else {
+    main();
+  }
 } catch (error) {
   throw(error);
   document.body.innerHTML = '<pre>' + error.stack + '</pre>';
