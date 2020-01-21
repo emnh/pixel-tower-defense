@@ -1383,7 +1383,7 @@ try {
   if (window.location.href.includes("#test")) {
     const texture =
       new THREE.TextureLoader().load('art/images/ProjectUtumno_full_4096.png', texture => {
-        new THREE.TextureLoader().load(tiles.cobalt_stone_11_base64, testTileTexture => {
+        new THREE.TextureLoader().load('art/images/testTile-index41x14.png', testTileTexture => {
           test(texture, testTileTexture);
         })
       });
