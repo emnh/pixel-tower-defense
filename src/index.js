@@ -727,7 +727,7 @@ const main = function() {
 };
 
 
-// TEST PART
+// TEST PART: COMMON FUNCTIONS
 
 const testPixelEqual = function(buffer, bx, by, tr, tg, tb, ta) {
   const stride = (by * config.textureHeight + bx) * config.floatSize;
@@ -762,6 +762,13 @@ const testPixelEqualBuffer = function(dataBuffer, pixelBuffer, bx, by) {
   const b = Math.round(dataBuffer[stride + 2] * 255 - eps);
   const a = Math.round(dataBuffer[stride + 3] * 255 - eps);
   return testPixelEqual(pixelBuffer, bx, by, r, g, b, a);
+};
+
+const combineResults = function(a, b) {
+  return {
+    text: a.text + "<br/>" + b.text,
+    success: a.success && b.success
+  };
 };
 
 const reportResults = function(setup, testResult) {
@@ -806,20 +813,34 @@ const reportResults = function(setup, testResult) {
   img.height = config.logHeight;
 };
 
-const TestTileTexture = {
-  test: function() {
+// TEST PART: ACTUAL TESTS
 
+const TestTileTexture = {
+  test: function(setup) {
+    const bx = config.textureWidth * 0.5;
+    const by = config.textureHeight * 0.5;
+    const testResult1 = testPixelEqualBuffer(setup.dataTextureBuffer, setup.renderBuffer, bx, by);
+    const testResult2 = testPixelEqualBuffer(setup.dataTextureBuffer, setup.renderBuffer, config.textureWidth - 1, config.textureHeight - 1);
+    let testResult = combineResults(testResult1, testResult2);
+    for (let bx = 0; bx < config.textureWidth; bx++) {
+      for (let by = 0; by < config.textureWidth; by++) {
+        const newTestResult = testPixelEqualBuffer(setup.dataTextureBuffer, setup.renderBuffer, bx, by);
+        testResult = combineResults(testResult, newTestResult);
+        if (testResult.success) {
+          testResult.text = '';
+        }
+      }
+    }
+    if (testResult.success) {
+      testResult.text = 'All ' + config.textureWidth + "x" + config.textureHeight + ' pixels passed: ';
+    }
+    return testResult;
   }
 };
 
-const test = function() {
-  prelude();
+// TEST PART: TEST SETUP
 
-  const width = config.textureWidth;
-  const height = config.textureHeight;
-  const setup = setupRenderer(width, height, { preserveDrawingBuffer: true });
-  const renderer = setup.renderer;
-
+const setupTestTexture = function(setup, width, height) {
   const dataTextureSize = width * height;
   const dataTextureBuffer = new Float32Array(config.floatSize * dataTextureSize);
 
@@ -836,6 +857,21 @@ const test = function() {
   const dataTexture =
     new THREE.DataTexture(dataTextureBuffer, config.textureWidth, config.textureHeight, THREE.RGBAFormat, THREE.FloatType);
 
+  setup.dataTextureSize = dataTextureSize;
+  setup.dataTextureBuffer = dataTextureBuffer;
+  setup.dataTexture = dataTexture;
+
+  return setup;
+};
+
+const clearScene = function(setup) {
+  while (setup.scene.children.length > 0) {
+    setup.scene.remove(setup.scene.children[0]);
+  }
+  return setup;
+};
+
+const setupQuad = function(setup, width, height) {
   const quad = new THREE.PlaneGeometry(2.0, 2.0);
 
   const vertexShader = `
@@ -860,7 +896,7 @@ void main() {
       {
         uniforms: {
           resolution: { value: new THREE.Vector2(width, height) },
-          texture: { value: dataTexture }
+          texture: { value: setup.dataTexture }
         },
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
@@ -873,65 +909,53 @@ void main() {
 
   setup.scene.add(mesh);
 
-  const testBox = new THREE.BoxGeometry(2.0, 2.0);
-  const testMesh = new THREE.Mesh(testBox, new THREE.MeshBasicMaterial(0xFFFFFF));
-  setup.scene.add(testMesh);
-  setup.scene.add(new THREE.AmbientLight(0xFFFFFF));
+  return setup;
+};
 
-  setup.camera.position.z = 0;
-  setup.camera.lookAt(testMesh.position);
+const setupRenderTarget = function(setup, width, height) {
+  setup.renderTarget = new THREE.WebGLRenderTarget(width, height);
+  setup.renderBuffer = new Uint8Array(config.floatSize * setup.dataTextureSize);
+  return setup;
+};
 
-  renderer.render(setup.scene, setup.camera);
+const render = function(setup, width, height) {
+  setup.renderer.setRenderTarget(null);
+  setup.renderer.render(setup.scene, setup.camera);
 
   // Note: must be done after render. Can as well just be hidden I guess.
   setup.canvas.style =
     "width: " + config.testWidth + "px;" +
     "height: " + config.testHeight + "px;";
 
-  const rt = new THREE.WebGLRenderTarget(config.textureWidth, config.textureHeight);
-  const renderBuffer = new Uint8Array(config.floatSize * dataTextureSize);
+  setup.renderer.setRenderTarget(setup.renderTarget);
+  setup.renderer.render(setup.scene, setup.camera);
+  setup.renderer.readRenderTargetPixels(setup.renderTarget, 0, 0, width, height, setup.renderBuffer);
+};
 
-  renderer.setRenderTarget(rt);
-  renderer.render(setup.scene, setup.camera);
-  renderer.readRenderTargetPixels(rt, 0, 0, config.textureWidth, config.textureHeight, renderBuffer);
+// TEST PART: TEST RUNNER
 
-  // Actual testing
-  
+const test = function() {
+  prelude();
 
-  const combine = function(a, b) {
-    return {
-      text: a.text + "<br/>" + b.text,
-      success: a.success && b.success
-    };
-  };
+  let setup = setupRenderer(config.textureWidth, config.textureHeight, { preserveDrawingBuffer: true });
 
-  const bx = config.textureWidth * 0.5;
-  const by = config.textureHeight * 0.5;
-  const testResult1 = testPixelEqualBuffer(dataTextureBuffer, renderBuffer, bx, by);
-  const testResult2 = testPixelEqualBuffer(dataTextureBuffer, renderBuffer, config.textureWidth - 1, config.textureHeight - 1);
-  let testResult = combine(testResult1, testResult2);
-  /*
-  let testResult = {
-    text: '',
-    success: true
-  };
-  */
-  for (let bx = 0; bx < config.textureWidth; bx++) {
-    for (let by = 0; by < config.textureWidth; by++) {
-      const newTestResult = testPixelEqualBuffer(dataTextureBuffer, renderBuffer, bx, by);
-      testResult = combine(testResult, newTestResult);
-      if (testResult.success) {
-        testResult.text = '';
-      }
-    }
-  }
-  if (testResult.success) {
-    testResult.text = 'All ' + config.textureWidth + "x" + config.textureHeight + ' pixels passed: ';
-  }
+  setup = setupTestTexture(setup, config.textureWidth, config.textureHeight);
+  setup = clearScene(setup);
+  setup = setupQuad(setup, config.textureWidth, config.textureHeight);
+  setup = setupRenderTarget(setup, config.textureWidth, config.textureHeight);
 
+  render(setup, config.textureWidth, config.textureHeight);
+  const testResult = TestTileTexture.test(setup);
   reportResults(setup, testResult);
 
-  //renderer.setSize(config.testWidth, config.testHeight);
+  /*
+  const testBox = new THREE.BoxGeometry(2.0, 2.0);
+  const testMesh = new THREE.Mesh(testBox, new THREE.MeshBasicMaterial(0xFFFFFF));
+  setup.scene.add(testMesh);
+  setup.scene.add(new THREE.AmbientLight(0xFFFFFF));
+  setup.camera.position.z = 0;
+  setup.camera.lookAt(testMesh.position);
+  */
 };
 
 try {
