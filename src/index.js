@@ -6,6 +6,7 @@ const bargeJSON = require('./barge.js').bargeJSON;
 const uniqueTerrain = require('./uniqueTerrain.js').uniqueTerrain;
 const sets = require('./terrainSets.js').terrainSets;
 const heightMap = require('./heightMap.js').heightMap;
+const tiles = require('./tiles.js');
 
 const config = {
   floatSize: 4,
@@ -215,7 +216,7 @@ const main = function() {
   */
   texture.minFilter = THREE.NearestFilter;
   texture.magFilter = THREE.NearestFilter;
-  //texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
   // create the plane's material
   /*
@@ -904,6 +905,7 @@ void main() {
         depthTest: false
       }
     );
+  setup.quadMaterial = material;
 
   const mesh = new THREE.Mesh(quad, material);
 
@@ -932,6 +934,26 @@ const render = function(setup, width, height) {
   setup.renderer.readRenderTargetPixels(setup.renderTarget, 0, 0, width, height, setup.renderBuffer);
 };
 
+const loadTileToTexture = function(setup, data, xoffset, yoffset, textureWidth, textureHeight) {
+  /*
+  const img = document.createElement('img');
+  img.src = b64url;
+  img.style = 'display: none;';
+  document.body.appendChild(img);
+  */
+  for (let y = 0; y < data.length; y++) {
+    for (let x = 0; x < data[y].length; x++) {
+      const stride = ((y + yoffset) * textureHeight + (x + xoffset)) * config.floatSize;
+      setup.dataTextureBuffer[stride + 0] = data[y][x][0] / 255;
+      setup.dataTextureBuffer[stride + 1] = data[y][x][1] / 255;
+      setup.dataTextureBuffer[stride + 2] = data[y][x][2] / 255;
+      setup.dataTextureBuffer[stride + 3] = data[y][x][3] / 255;
+    }
+  }
+  setup.dataTexture.needsUpdate = true;
+  return setup;
+};
+
 // TEST PART: TEST RUNNER
 
 const test = function() {
@@ -940,8 +962,16 @@ const test = function() {
   let setup = setupRenderer(config.textureWidth, config.textureHeight, { preserveDrawingBuffer: true });
 
   setup = setupTestTexture(setup, config.textureWidth, config.textureHeight);
+  const tileSize = 32;
+  for (let xtile = 0; xtile < config.textureWidth / tileSize; xtile += 2) {
+    for (let ytile = 1; ytile < config.textureHeight / tileSize; ytile += 2) {
+      setup = loadTileToTexture(setup, tiles.cobalt_stone_11, xtile * tileSize, ytile * tileSize, config.textureWidth, config.textureHeight);
+    }
+  }
   setup = clearScene(setup);
   setup = setupQuad(setup, config.textureWidth, config.textureHeight);
+  setup.quadMaterial.needsUpdate = true;
+  setup.quadMaterial.uniforms.texture.needsUpdate = true;
   setup = setupRenderTarget(setup, config.textureWidth, config.textureHeight);
 
   render(setup, config.textureWidth, config.textureHeight);
