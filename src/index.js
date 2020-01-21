@@ -258,7 +258,7 @@ const renderTerrain2D = function(setup) {
     { value: new THREE.Vector2(1.0 / config.textureWidth, 1.0 / config.textureHeight ) };
   setup.terrainQuadMaterial.uniforms.mapSizeInTiles = { value: new THREE.Vector2(config.mapWidthInTiles, config.mapHeightInTiles) };
   setup.terrainRenderTarget = new THREE.WebGLRenderTarget(config.mapHeightInPixels, config.mapWidthInPixels);
-  setup.terrainRenderTarget.anisotropy = setup.renderer.getMaxAnisotropy();
+  setup.terrainRenderTarget.texture.anisotropy = setup.renderer.capabilities.getMaxAnisotropy();
   return setup;
 };
 
