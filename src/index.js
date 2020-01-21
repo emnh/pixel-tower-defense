@@ -1,3 +1,5 @@
+'use strict';
+
 const THREE = require('three');
 const SimplexNoise = require('simplex-noise');
 const seedrandom = require('seedrandom');
@@ -15,8 +17,23 @@ const config = {
   testWidth: 200,
   testHeight: 150,
   logWidth: 200,
-  logHeight: 150
+  logHeight: 150,
+  tileWidth: 32,
+  tileHeight: 32,
+  mapWidthInTiles: 32,
+  mapHeightInTiles: 32,
+  numTilesX: 64,
+  numTilesY: 95
 };
+// Terrain has width, height and depth.
+// Depth is the Y axis, i.e. up and down.
+config.mapWidthInPixels = config.tileWidth * config.mapWidthInTiles;
+config.mapHeightInPixels = config.tileWidth * config.mapHeightInTiles;
+config.quadVertexShader = `
+  void main() {
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
 
 const prelude = function() {
   // Global PRNG: set Math.random.
@@ -61,11 +78,208 @@ const setupRenderer = function(width, height, renderOpts) {
     container: container,
     scene: scene,
     renderer: renderer,
-    canvas: renderer.domElement
+    canvas: renderer.domElement,
+    rendererWidth: width,
+    rendererHeight: height
   };
 };
 
-const main = function() {
+const setupQuad = function(setup, width, height, vertexShader, fragmentShader, texture) {
+  const quad = new THREE.PlaneGeometry(2.0, 2.0);
+
+  const material =
+    new THREE.ShaderMaterial(
+      {
+        uniforms: {
+          resolution: { value: new THREE.Vector2(width, height) },
+          texture: { value: texture }
+        },
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        depthWrite: false,
+        depthTest: false
+      }
+    );
+  setup.quadMaterial = material;
+
+  const mesh = new THREE.Mesh(quad, material);
+
+  setup.quadScene = new THREE.Scene();
+  //setup.quadScene.add(setup.camera);
+  setup.quadScene.add(mesh);
+
+  return setup;
+};
+
+const setupTerrainQuad = function(setup) {
+  const vertexShader = config.quadVertexShader;
+
+  const fragmentShader = `
+uniform vec2 resolution;
+uniform vec2 tileSizeRelativeToTexture;
+uniform vec2 pixelSizeRelativeToTexture;
+uniform vec2 mapSizeInTiles;
+uniform sampler2D texture;
+uniform sampler2D tileIndexTexture;
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / resolution.xy;
+  
+  // TODO: rounding to nearest tile?
+  vec2 tileIndexUV = floor(uv * mapSizeInTiles) / mapSizeInTiles;
+  vec4 tileIndex = texture2D(tileIndexTexture, tileIndexUV);
+  
+  // TODO: rounding to nearest pixel?
+  vec2 tileOffset = fract(uv * mapSizeInTiles);
+
+  vec2 tileUV = tileIndex.xy * tileSizeRelativeToTexture + tileOffset * tileSizeRelativeToTexture;
+  tileUV.y = 1.0 - tileUV.y;
+  vec4 color = texture2D(texture, tileUV);
+  gl_FragColor = color;
+}
+`;
+
+  setupQuad(setup, config.mapWidthInPixels, config.mapHeightInPixels, vertexShader, fragmentShader, setup.tileTexture);
+  return setup;
+};
+
+const setupScreenCopyQuad = function(setup, texture) {
+  const vertexShader = config.quadVertexShader;
+
+  const fragmentShader = `
+uniform vec2 resolution;
+uniform sampler2D texture;
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / resolution.xy;
+  vec4 color = texture2D(texture, uv);
+  gl_FragColor = color;
+}
+`;
+
+  setup = setupQuad(setup, setup.rendererWidth, setup.rendererHeight, vertexShader, fragmentShader, texture);
+  setup.screenCopyQuadScene = setup.quadScene;
+  setup.screenCopyQuadMaterial = setup.quadMaterial;
+  return setup;
+};
+
+const getTerrainTileSet = function(chosenSet) {
+  let validTerrain = [];
+  const keys = Object.keys(uniqueTerrain);
+  const uniqueWater = {};
+  const uniqueGround = {};
+  for (let i = 0; i < keys.length; i++) {
+    if (uniqueTerrain[keys[i]].includes('water')) {
+      uniqueWater[keys[i]] = uniqueTerrain[keys[i]];
+    } else {
+      uniqueGround[keys[i]] = uniqueTerrain[keys[i]];
+    }
+  }
+  const waterKeys = Object.keys(uniqueWater);
+  const groundKeys = Object.keys(uniqueGround);
+  const tset = [];
+  //const choose = k => k[Math.floor(Math.random() * k.length)];
+  //const chosenSet = choose(sets);
+  const randomTerrain = false;
+  for (let i = 0; i < 6; i++) {
+    const key =
+      randomTerrain ?
+        (i === 0 ?
+          choose(waterKeys) :
+          choose(groundKeys)) :
+        chosenSet[i];
+    const xy = key.split("X");
+    // Note that xy is reversed. YxX. It was a mistake made earlier.
+    const x = parseInt(xy[1]);
+    const y = parseInt(xy[0]);
+    const p = [x, y];
+    tset.push(key);
+    console.log(key, uniqueTerrain[key], p[0], p[1]);
+    validTerrain.push(p);
+  }
+  console.log(JSON.stringify(tset));
+  return validTerrain;
+};
+
+const getTerrainHeightSub = function(x, y) {
+  // TODO: optimize?
+  const scale = 1.0;
+  const xscale = scale / config.mapWidthInTiles;
+  const yscale = scale / config.mapHeightInTiles;
+  const xs = Math.floor(x * xscale);
+  const ys = Math.floor(y * yscale);
+  const ret = (simplex.noise2D(x, y) + 1.0) / 2.0;
+  return ret;
+};
+
+const getTerrainHeight = function(x, y) {
+  const ret = heightMap[config.mapWidthInTiles - 1 - y][x] / 256.0;
+  return ret;
+}
+
+const renderTerrain2D = function(setup) {
+  setup = setupTerrainQuad(setup);
+  setup.terrainQuadScene = setup.quadScene;
+  setup.terrainQuadMaterial = setup.quadMaterial;
+  setup.tileIndexTextureData = new Float32Array(config.mapWidthInTiles * config.mapHeightInTiles * config.floatSize);
+  const dt = setup.tileIndexTextureData;
+
+  // Fill in terrain indices
+  // TODO: terrain set as parameter
+  const validTerrain = getTerrainTileSet(sets[16]);
+  console.log(validTerrain);
+  for (let x = 0; x < config.mapWidthInTiles; x++) {
+    for (let y = 0; y < config.mapHeightInTiles; y++) {
+      // TODO: check that it works for rectangular map
+      const stride = (y * config.mapHeightInTiles + x) * config.floatSize;
+      const height = getTerrainHeight(x, y);
+      const tile = validTerrain[Math.floor(height * validTerrain.length)];
+      dt[stride + 0] = tile[0];
+      dt[stride + 1] = tile[1];
+      //dt[stride + 0] = Math.floor(Math.random() * config.numTilesX);
+      //dt[stride + 1] = Math.floor(Math.random() * config.numTilesY);
+      dt[stride + 2] = 0;
+      dt[stride + 3] = 0;
+    }
+  }
+
+  const ti =
+    new THREE.DataTexture(setup.tileIndexTextureData, config.mapWidthInTiles, config.mapHeightInTiles, THREE.RBGAFormat, THREE.FloatType);
+  setup.terrainQuadMaterial.uniforms.tileIndexTexture = { value: ti };
+  setup.terrainQuadMaterial.uniforms.tileSizeRelativeToTexture =
+    { value: new THREE.Vector2(config.tileWidth / config.textureWidth, config.tileHeight / config.textureHeight ) };
+  setup.terrainQuadMaterial.uniforms.pixelSizeRelativeToTexture =
+    { value: new THREE.Vector2(1.0 / config.textureWidth, 1.0 / config.textureHeight ) };
+  setup.terrainQuadMaterial.uniforms.mapSizeInTiles = { value: new THREE.Vector2(config.mapWidthInTiles, config.mapHeightInTiles) };
+  setup.terrainRenderTarget = new THREE.WebGLRenderTarget(config.mapHeightInPixels, config.mapWidthInPixels);
+  return setup;
+};
+
+const main = function(texture) {
+  prelude();
+
+  document.body.style = 'margin: 0px; padding: 0px; overflow: hidden;';
+
+  let setup = setupRenderer(window.innerWidth, window.innerHeight, {});
+  setup.tileTexture = texture;
+  setup = renderTerrain2D(setup);
+  setup = setupScreenCopyQuad(setup, setup.terrainRenderTarget.texture);
+
+  setup.renderer.setRenderTarget(setup.terrainRenderTarget);
+  setup.renderer.render(setup.terrainQuadScene, setup.camera);
+
+  function update() {
+    //setup.terrainRenderTarget.texture.needsUpdate = true;
+    setup.screenCopyQuadMaterial.uniforms.texture.needsUpdate = true;
+    setup.renderer.setRenderTarget(null);
+    setup.renderer.render(setup.screenCopyQuadScene, setup.camera);
+    requestAnimationFrame(update);
+  }
+
+  requestAnimationFrame(update);
+};
+
+const mainOld = function() {
   prelude();
 
   const setup = setupRenderer(window.innerWidth, window.innerHeight, {});
@@ -820,12 +1034,12 @@ const TestTileTexture = {
   test: function(setup) {
     const bx = config.textureWidth * 0.5;
     const by = config.textureHeight * 0.5;
-    const testResult1 = testPixelEqualBuffer(setup.dataTextureBuffer, setup.renderBuffer, bx, by);
-    const testResult2 = testPixelEqualBuffer(setup.dataTextureBuffer, setup.renderBuffer, config.textureWidth - 1, config.textureHeight - 1);
+    const testResult1 = testPixelEqualBuffer(setup.tileTextureBuffer, setup.renderBuffer, bx, by);
+    const testResult2 = testPixelEqualBuffer(setup.tileTextureBuffer, setup.renderBuffer, config.textureWidth - 1, config.textureHeight - 1);
     let testResult = combineResults(testResult1, testResult2);
     for (let bx = 0; bx < config.textureWidth; bx++) {
       for (let by = 0; by < config.textureWidth; by++) {
-        const newTestResult = testPixelEqualBuffer(setup.dataTextureBuffer, setup.renderBuffer, bx, by);
+        const newTestResult = testPixelEqualBuffer(setup.tileTextureBuffer, setup.renderBuffer, bx, by);
         testResult = combineResults(testResult, newTestResult);
         if (testResult.success) {
           testResult.text = '';
@@ -858,9 +1072,9 @@ const setupTestTexture = function(setup, width, height) {
   const dataTexture =
     new THREE.DataTexture(dataTextureBuffer, config.textureWidth, config.textureHeight, THREE.RGBAFormat, THREE.FloatType);
 
-  setup.dataTextureSize = dataTextureSize;
-  setup.dataTextureBuffer = dataTextureBuffer;
-  setup.dataTexture = dataTexture;
+  setup.tileTextureSize = dataTextureSize;
+  setup.tileTextureBuffer = dataTextureBuffer;
+  setup.tileTexture = dataTexture;
 
   return setup;
 };
@@ -872,9 +1086,7 @@ const clearScene = function(setup) {
   return setup;
 };
 
-const setupQuad = function(setup, width, height) {
-  const quad = new THREE.PlaneGeometry(2.0, 2.0);
-
+const setupTestQuad = function(setup, width, height) {
   const vertexShader = `
 void main() {
   gl_Position = vec4(position.xy, 0.0, 1.0);
@@ -892,37 +1104,18 @@ void main() {
 }
 `;
 
-  const material =
-    new THREE.ShaderMaterial(
-      {
-        uniforms: {
-          resolution: { value: new THREE.Vector2(width, height) },
-          texture: { value: setup.dataTexture }
-        },
-        vertexShader: vertexShader,
-        fragmentShader: fragmentShader,
-        depthWrite: false,
-        depthTest: false
-      }
-    );
-  setup.quadMaterial = material;
-
-  const mesh = new THREE.Mesh(quad, material);
-
-  setup.scene.add(mesh);
-
-  return setup;
+  return setupQuad(setup, width, height, vertexShader, fragmentShader, setup.tileTexture);
 };
 
 const setupRenderTarget = function(setup, width, height) {
   setup.renderTarget = new THREE.WebGLRenderTarget(width, height);
-  setup.renderBuffer = new Uint8Array(config.floatSize * setup.dataTextureSize);
+  setup.renderBuffer = new Uint8Array(config.floatSize * setup.tileTextureSize);
   return setup;
 };
 
-const render = function(setup, width, height) {
+const render = function(setup, scene, width, height) {
   setup.renderer.setRenderTarget(null);
-  setup.renderer.render(setup.scene, setup.camera);
+  setup.renderer.render(scene, setup.camera);
 
   // Note: must be done after render. Can as well just be hidden I guess.
   setup.canvas.style =
@@ -930,7 +1123,7 @@ const render = function(setup, width, height) {
     "height: " + config.testHeight + "px;";
 
   setup.renderer.setRenderTarget(setup.renderTarget);
-  setup.renderer.render(setup.scene, setup.camera);
+  setup.renderer.render(scene, setup.camera);
   setup.renderer.readRenderTargetPixels(setup.renderTarget, 0, 0, width, height, setup.renderBuffer);
 };
 
@@ -944,13 +1137,13 @@ const loadTileToTexture = function(setup, data, xoffset, yoffset, textureWidth, 
   for (let y = 0; y < data.length; y++) {
     for (let x = 0; x < data[y].length; x++) {
       const stride = ((y + yoffset) * textureHeight + (x + xoffset)) * config.floatSize;
-      setup.dataTextureBuffer[stride + 0] = data[y][x][0] / 255;
-      setup.dataTextureBuffer[stride + 1] = data[y][x][1] / 255;
-      setup.dataTextureBuffer[stride + 2] = data[y][x][2] / 255;
-      setup.dataTextureBuffer[stride + 3] = data[y][x][3] / 255;
+      setup.tileTextureBuffer[stride + 0] = data[y][x][0] / 255;
+      setup.tileTextureBuffer[stride + 1] = data[y][x][1] / 255;
+      setup.tileTextureBuffer[stride + 2] = data[y][x][2] / 255;
+      setup.tileTextureBuffer[stride + 3] = data[y][x][3] / 255;
     }
   }
-  setup.dataTexture.needsUpdate = true;
+  setup.tileTexture.needsUpdate = true;
   return setup;
 };
 
@@ -969,12 +1162,12 @@ const test = function() {
     }
   }
   setup = clearScene(setup);
-  setup = setupQuad(setup, config.textureWidth, config.textureHeight);
+  setup = setupTestQuad(setup, config.textureWidth, config.textureHeight);
   setup.quadMaterial.needsUpdate = true;
   setup.quadMaterial.uniforms.texture.needsUpdate = true;
   setup = setupRenderTarget(setup, config.textureWidth, config.textureHeight);
 
-  render(setup, config.textureWidth, config.textureHeight);
+  render(setup, setup.quadScene, config.textureWidth, config.textureHeight);
   const testResult = TestTileTexture.test(setup);
   reportResults(setup, testResult);
 
@@ -992,7 +1185,8 @@ try {
   if (window.location.href.includes("#test")) {
     test();
   } else {
-    main();
+    const texture =
+      new THREE.TextureLoader().load('art/images/ProjectUtumno_full_4096.png', texture => main(texture));
   }
 } catch (error) {
   throw(error);
