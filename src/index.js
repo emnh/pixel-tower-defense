@@ -44,6 +44,10 @@ const prelude = function() {
   seedrandom('hello.', { global: true });
 };
 
+const fatal = function(msg) {
+  document.body.innerHTML = '<h1>' + msg + '</h1>';
+}
+
 const setupRenderer = function(width, height, renderOpts) {
   // Set some camera attributes.
   const VIEW_ANGLE = 45;
@@ -57,6 +61,12 @@ const setupRenderer = function(width, height, renderOpts) {
   // Create a WebGL renderer, camera
   // and a scene
   const renderer = new THREE.WebGLRenderer(renderOpts);
+  if ( ! renderer.capabilities.isWebGL2 &&
+     ! renderer.extensions.get( "OES_texture_float" ) ) {
+    fatal("No OES_texture_float support for float textures.");
+    return;
+  }
+
   const camera =
       new THREE.PerspectiveCamera(
           VIEW_ANGLE,
@@ -965,11 +975,11 @@ const mainOld = function() {
 // TEST PART: COMMON FUNCTIONS
 
 const testPixelEqual = function(buffer, bx, by, tr, tg, tb, ta) {
-  const stride = (by * config.textureHeight + bx) * config.floatSize;
-  const r = buffer[stride + 0];
-  const g = buffer[stride + 1];
-  const b = buffer[stride + 2];
-  const a = buffer[stride + 3];
+  const stride = ((config.textureHeight - by - 1) * config.textureWidth + bx) * config.floatSize;
+  const r = buffer[stride + 0] * 255;
+  const g = buffer[stride + 1] * 255;
+  const b = buffer[stride + 2] * 255;
+  const a = buffer[stride + 3] * 255;
   const result =
     "Pixel equality test:" +
     "x: " + bx +
@@ -978,11 +988,12 @@ const testPixelEqual = function(buffer, bx, by, tr, tg, tb, ta) {
     ", g: " + g + " should be " + tg +
     ", b: " + b + " should be " + tb +
     ", a: " + a + " should be " + ta;
+  const threshold = 8;
   const success =
-    r == tr &&
-    g == tg &&
-    b == tb &&
-    a == ta;
+    Math.abs(r - tr) <= threshold &&
+    Math.abs(g - tg) <= threshold &&
+    Math.abs(b - tb) <= threshold &&
+    Math.abs(a - ta) <= threshold;
   return {
     text: result,
     success: success
@@ -990,18 +1001,25 @@ const testPixelEqual = function(buffer, bx, by, tr, tg, tb, ta) {
 };
 
 const testPixelEqualBuffer = function(dataBuffer, pixelBuffer, bx, by) {
-  const stride = (by * config.textureHeight + bx) * config.floatSize;
+  const stride = (by * config.textureWidth + bx) * config.floatSize;
   const eps = 1.0e-6;
-  const r = Math.round(dataBuffer[stride + 0] * 255 - eps);
-  const g = Math.round(dataBuffer[stride + 1] * 255 - eps);
-  const b = Math.round(dataBuffer[stride + 2] * 255 - eps);
-  const a = Math.round(dataBuffer[stride + 3] * 255 - eps);
+  const r = dataBuffer[stride + 0];
+  const g = dataBuffer[stride + 1];
+  const b = dataBuffer[stride + 2];
+  const a = dataBuffer[stride + 3];
+  if (dataBuffer[stride] === -1.0) {
+    return {
+      text: '',
+      success: true
+    };
+  }
   return testPixelEqual(pixelBuffer, bx, by, r, g, b, a);
 };
 
 const combineResults = function(a, b) {
+  const oneEmpty = a.text === '' || b.text === '';
   return {
-    text: a.text + "<br/>" + b.text,
+    text: a.text + (oneEmpty ? "" : "<br/>") + b.text,
     success: a.success && b.success
   };
 };
@@ -1058,11 +1076,13 @@ const TestTileTexture = {
     const testResult2 = testPixelEqualBuffer(setup.tileTextureBuffer, setup.renderBuffer, config.textureWidth - 1, config.textureHeight - 1);
     let testResult = combineResults(testResult1, testResult2);
     for (let bx = 0; bx < config.textureWidth; bx++) {
-      for (let by = 0; by < config.textureWidth; by++) {
+      for (let by = 0; by < config.textureHeight; by++) {
         const newTestResult = testPixelEqualBuffer(setup.tileTextureBuffer, setup.renderBuffer, bx, by);
         testResult = combineResults(testResult, newTestResult);
         if (testResult.success) {
           testResult.text = '';
+        } else {
+          break;
         }
       }
     }
@@ -1075,6 +1095,7 @@ const TestTileTexture = {
 
 // TEST PART: TEST SETUP
 
+// Unused function. Might be useful for avoiding loading tile image png.
 const setupTestTexture = function(setup, width, height) {
   const dataTextureSize = width * height;
   const dataTextureBuffer = new Float32Array(config.floatSize * dataTextureSize);
@@ -1099,10 +1120,35 @@ const setupTestTexture = function(setup, width, height) {
   return setup;
 };
 
-const clearScene = function(setup) {
-  while (setup.scene.children.length > 0) {
-    setup.scene.remove(setup.scene.children[0]);
+const setupTileTexture = function(setup, width, height, texture) {
+  const dataTextureSize = width * height;
+  const dataTextureBuffer = new Float32Array(config.floatSize * dataTextureSize);
+
+  for (let i = 0; i < dataTextureSize; i++) {
+    const stride = i * config.floatSize;
+    const x = i % height;
+    const y = Math.floor(i / height);
+    // -1.0 means don't check this pixel when testing
+    dataTextureBuffer[stride] = -1.0;
+    dataTextureBuffer[stride + 1] = -1.0;
+    dataTextureBuffer[stride + 2] = -1.0;
+    dataTextureBuffer[stride + 3] = -1.0;
   }
+
+  setup.tileTextureSize = dataTextureSize;
+  setup.tileTextureBuffer = dataTextureBuffer;
+  setup.tileTexture = texture;
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+
+  return setup;
+};
+
+const setupTestTileTexture = function(setup) {
+  setup.testTileTextureBuffer = new Float32Array(config.floatSize * config.tileWidth * config.tileHeight);
+  setup.testTileTexture = new THREE.DataTexture(setup.testTileTextureBuffer, config.tileWidth, config.tileHeight, THREE.RGBAFormat, THREE.FloatType);
+  setup.testTileTexture.minFilter = THREE.NearestFilter;
+  setup.testTileTexture.magFilter = THREE.NearestFilter;
   return setup;
 };
 
@@ -1128,8 +1174,21 @@ void main() {
 };
 
 const setupRenderTarget = function(setup, width, height) {
-  setup.renderTarget = new THREE.WebGLRenderTarget(width, height);
-  setup.renderBuffer = new Uint8Array(config.floatSize * setup.tileTextureSize);
+  // setup.renderTarget = new THREE.WebGLRenderTarget(width, height);
+  setup.renderTarget =
+    new THREE.WebGLRenderTarget(width, height, {
+			wrapS: THREE.ClampToEdgeWrapping,
+			wrapT: THREE.ClampToEdgeWrapping,
+			minFilter: THREE.NearestFilter,
+			magFilter: THREE.NearestFilter,
+			format: THREE.RGBAFormat,
+			type: ( /(iPad|iPhone|iPod)/g.test( navigator.userAgent ) ) ? THREE.HalfFloatType : THREE.FloatType,
+			stencilBuffer: false,
+			depthBuffer: false
+		});
+  setup.renderTarget.texture.minFilter = THREE.NearestFilter;
+  setup.renderTarget.texture.magFilter = THREE.NearestFilter;
+  setup.renderBuffer = new Float32Array(config.floatSize * setup.tileTextureSize);
   return setup;
 };
 
@@ -1147,49 +1206,108 @@ const render = function(setup, scene, width, height) {
   setup.renderer.readRenderTargetPixels(setup.renderTarget, 0, 0, width, height, setup.renderBuffer);
 };
 
-const loadTileToTexture = function(setup, data, xoffset, yoffset, textureWidth, textureHeight) {
-  /*
-  const img = document.createElement('img');
-  img.src = b64url;
-  img.style = 'display: none;';
-  document.body.appendChild(img);
-  */
+const loadTileToTexture = function(setup, buffer, data, xoffset, yoffset, textureWidth, textureHeight, scale) {
   for (let y = 0; y < data.length; y++) {
     for (let x = 0; x < data[y].length; x++) {
-      const stride = ((y + yoffset) * textureHeight + (x + xoffset)) * config.floatSize;
-      setup.tileTextureBuffer[stride + 0] = data[y][x][0] / 255;
-      setup.tileTextureBuffer[stride + 1] = data[y][x][1] / 255;
-      setup.tileTextureBuffer[stride + 2] = data[y][x][2] / 255;
-      setup.tileTextureBuffer[stride + 3] = data[y][x][3] / 255;
+      const stride = ((y + yoffset) * textureWidth + (x + xoffset)) * config.floatSize;
+      const xRev = x;
+      const yRev = y;
+      buffer[stride + 0] = data[yRev][xRev][0] / scale;
+      buffer[stride + 1] = data[yRev][xRev][1] / scale;
+      buffer[stride + 2] = data[yRev][xRev][2] / scale;
+      // buffer[stride + 3] = data[yRev][xRev][3] / scale;
+      buffer[stride + 3] = data[yRev][xRev][3] / scale;
     }
   }
-  setup.tileTexture.needsUpdate = true;
+  return setup;
+};
+
+const reloadBufferTileToTexture =
+  function(
+    setup, buffer, xoffset, yoffset, textureWidth, textureHeight,
+    buffer2, buffer2XOffset, buffer2YOffset, textureWidth2, textureHeight2, scale) {
+  for (let y = 0; y < config.tileHeight; y++) {
+    for (let x = 0; x < config.tileWidth; x++) {
+      const stride = ((y + yoffset) * textureWidth + (x + xoffset)) * config.floatSize;
+      //const stride2 = ((textureHeight - (y + 1 + buffer2YOffset)) * textureWidth2 + (x + buffer2XOffset)) * config.floatSize;
+      const stride2 = ((textureHeight2 - (y + 1 + buffer2YOffset)) * textureWidth2 + (x + buffer2XOffset)) * config.floatSize;
+      //const stride2 = ((y + buffer2YOffset) * textureWidth2 + (x + buffer2XOffset)) * config.floatSize;
+      buffer[stride + 0] = buffer2[stride2 + 0] / scale;
+      buffer[stride + 1] = buffer2[stride2 + 1] / scale;
+      buffer[stride + 2] = buffer2[stride2 + 2] / scale;
+      buffer[stride + 3] = buffer2[stride2 + 3] / scale;
+    }
+  }
   return setup;
 };
 
 // TEST PART: TEST RUNNER
 
-const test = function() {
+const test = function(texture) {
   prelude();
 
   let setup = setupRenderer(config.textureWidth, config.textureHeight, { preserveDrawingBuffer: true });
+  setup = setupTileTexture(setup, config.textureWidth, config.textureHeight, texture);
 
-  setup = setupTestTexture(setup, config.textureWidth, config.textureHeight);
-  const tileSize = 32;
-  for (let xtile = 0; xtile < config.textureWidth / tileSize; xtile += 2) {
-    for (let ytile = 1; ytile < config.textureHeight / tileSize; ytile += 2) {
-      setup = loadTileToTexture(setup, tiles.cobalt_stone_11, xtile * tileSize, ytile * tileSize, config.textureWidth, config.textureHeight);
-    }
-  }
-  setup = clearScene(setup);
+  const cobalt_stone_11_xtile = 41;
+  const cobalt_stone_11_ytile = 14;
+  setup =
+    loadTileToTexture(
+      setup,
+      setup.tileTextureBuffer,
+      tiles.cobalt_stone_11,
+      cobalt_stone_11_xtile * config.tileWidth,
+      cobalt_stone_11_ytile * config.tileHeight,
+      config.textureWidth,
+      config.textureHeight,
+      1);
+
+  setup = setupTestTileTexture(setup);
+  setup =
+    loadTileToTexture(
+      setup,
+      setup.testTileTextureBuffer,
+      tiles.cobalt_stone_11,
+      0,
+      0,
+      config.tileWidth,
+      config.tileHeight,
+      255);
+
   setup = setupTestQuad(setup, config.textureWidth, config.textureHeight);
-  setup.quadMaterial.needsUpdate = true;
-  setup.quadMaterial.uniforms.texture.needsUpdate = true;
   setup = setupRenderTarget(setup, config.textureWidth, config.textureHeight);
 
   render(setup, setup.quadScene, config.textureWidth, config.textureHeight);
   const testResult = TestTileTexture.test(setup);
   reportResults(setup, testResult);
+
+  const renderBufferCopy = new Float32Array(setup.renderBuffer);
+
+  setup.quadMaterial.uniforms.texture.value = setup.testTileTexture;
+  render(setup, setup.quadScene, config.textureWidth, config.textureHeight);
+  const testResult2 = TestTileTexture.test(setup);
+  reportResults(setup, testResult2);
+
+  setup = setupTestTileTexture(setup);
+  setup =
+    reloadBufferTileToTexture(
+      setup,
+      setup.testTileTextureBuffer,
+      0,
+      0,
+      config.tileWidth,
+      config.tileHeight,
+      renderBufferCopy,
+      cobalt_stone_11_xtile * config.tileWidth,
+      cobalt_stone_11_ytile * config.tileHeight,
+      config.textureWidth,
+      config.textureHeight,
+      1);
+
+  setup.quadMaterial.uniforms.texture.value = setup.testTileTexture;
+  render(setup, setup.quadScene, config.textureWidth, config.textureHeight);
+  const testResult3 = TestTileTexture.test(setup);
+  reportResults(setup, testResult3);
 
   /*
   const testBox = new THREE.BoxGeometry(2.0, 2.0);
@@ -1203,7 +1321,8 @@ const test = function() {
 
 try {
   if (window.location.href.includes("#test")) {
-    test();
+    const texture =
+      new THREE.TextureLoader().load('art/images/ProjectUtumno_full_4096.png', texture => test(texture));
   } else {
     const texture =
       new THREE.TextureLoader().load('art/images/ProjectUtumno_full_4096.png', texture => main(texture));
