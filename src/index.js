@@ -726,6 +726,92 @@ const main = function() {
   requestAnimationFrame(update);
 };
 
+
+// TEST PART
+
+const testPixelEqual = function(buffer, bx, by, tr, tg, tb, ta) {
+  const stride = (by * config.textureHeight + bx) * config.floatSize;
+  const r = buffer[stride + 0];
+  const g = buffer[stride + 1];
+  const b = buffer[stride + 2];
+  const a = buffer[stride + 3];
+  const result =
+    "Pixel equality test:" +
+    "x: " + bx +
+    ", y: " + by +
+    ", r: " + r + " should be " + tr +
+    ", g: " + g + " should be " + tg +
+    ", b: " + b + " should be " + tb +
+    ", a: " + a + " should be " + ta;
+  const success =
+    r == tr &&
+    g == tg &&
+    b == tb &&
+    a == ta;
+  return {
+    text: result,
+    success: success
+  };
+};
+
+const testPixelEqualBuffer = function(dataBuffer, pixelBuffer, bx, by) {
+  const stride = (by * config.textureHeight + bx) * config.floatSize;
+  const eps = 1.0e-6;
+  const r = Math.round(dataBuffer[stride + 0] * 255 - eps);
+  const g = Math.round(dataBuffer[stride + 1] * 255 - eps);
+  const b = Math.round(dataBuffer[stride + 2] * 255 - eps);
+  const a = Math.round(dataBuffer[stride + 3] * 255 - eps);
+  return testPixelEqual(pixelBuffer, bx, by, r, g, b, a);
+};
+
+const reportResults = function(setup, testResult) {
+  const dataURL = setup.canvas.toDataURL();
+
+  const h1 = document.createElement('h1');
+
+  document.body.appendChild(h1);
+
+  h1.innerHTML = 'Texture Render Test';
+
+  const groupResult = document.createElement('div');
+
+  groupResult.style = "display: inline; position: relative; top: -" + config.logHeight * 0.5 + "px;";
+
+  document.body.appendChild(groupResult);
+
+  const testResultElement = document.createElement('span');
+
+  const testResultIcon = document.createElement('img');
+
+  if (testResult.success) {
+    testResultElement.innerHTML = ' Test OK: ' + testResult.text;
+    testResultIcon.src = "art/images/icons/ok.svg";
+  } else {
+    testResultElement.innerHTML = ' Test FAIL: ' + testResult.text;
+    testResultIcon.src = "art/images/icons/fail.svg";
+  }
+
+  testResultIcon.height = 20;
+
+  groupResult.appendChild(testResultIcon);
+
+  groupResult.appendChild(testResultElement);
+
+  const img = document.createElement('img');
+
+  document.body.appendChild(img);
+
+  img.src = dataURL;
+  img.width = config.logWidth;
+  img.height = config.logHeight;
+};
+
+const TestTileTexture = {
+  test: function() {
+
+  }
+};
+
 const test = function() {
   prelude();
 
@@ -735,20 +821,20 @@ const test = function() {
   const renderer = setup.renderer;
 
   const dataTextureSize = width * height;
-  const data = new Float32Array(config.floatSize * dataTextureSize);
+  const dataTextureBuffer = new Float32Array(config.floatSize * dataTextureSize);
 
   for (let i = 0; i < dataTextureSize; i++) {
     const stride = i * config.floatSize;
     const x = i % height;
     const y = Math.floor(i / height);
-    data[stride] = x / width;
-    data[stride + 1] = y / height;
-    data[stride + 2] = 0;
-    data[stride + 3] = 1;
+    dataTextureBuffer[stride] = x / width;
+    dataTextureBuffer[stride + 1] = y / height;
+    dataTextureBuffer[stride + 2] = 0;
+    dataTextureBuffer[stride + 3] = 1;
   }
 
   const dataTexture =
-    new THREE.DataTexture(data, config.textureWidth, config.textureHeight, THREE.RGBAFormat, THREE.FloatType);
+    new THREE.DataTexture(dataTextureBuffer, config.textureWidth, config.textureHeight, THREE.RGBAFormat, THREE.FloatType);
 
   const quad = new THREE.PlaneGeometry(2.0, 2.0);
 
@@ -802,48 +888,15 @@ void main() {
     "width: " + config.testWidth + "px;" +
     "height: " + config.testHeight + "px;";
 
-  // Actual testing
   const rt = new THREE.WebGLRenderTarget(config.textureWidth, config.textureHeight);
-  const buffer = new Uint8Array(config.floatSize * dataTextureSize);
+  const renderBuffer = new Uint8Array(config.floatSize * dataTextureSize);
 
   renderer.setRenderTarget(rt);
   renderer.render(setup.scene, setup.camera);
-  renderer.readRenderTargetPixels(rt, 0, 0, config.textureWidth, config.textureHeight, buffer);
+  renderer.readRenderTargetPixels(rt, 0, 0, config.textureWidth, config.textureHeight, renderBuffer);
 
-  const testPixelEqual = function(bx, by, tr, tg, tb, ta) {
-    const stride = (by * config.textureHeight + bx) * config.floatSize;
-    const r = buffer[stride + 0];
-    const g = buffer[stride + 1];
-    const b = buffer[stride + 2];
-    const a = buffer[stride + 3];
-    const result =
-      "Pixel equality test:" +
-      "x: " + bx +
-      ", y: " + by +
-      ", r: " + r + " should be " + tr +
-      ", g: " + g + " should be " + tg +
-      ", b: " + b + " should be " + tb +
-      ", a: " + a + " should be " + ta;
-    const success =
-      r == tr &&
-      g == tg &&
-      b == tb &&
-      a == ta;
-    return {
-      text: result,
-      success: success
-    };
-  };
-
-  const testPixelEqualBuffer = function(bx, by) {
-    const stride = (by * config.textureHeight + bx) * config.floatSize;
-    const eps = 1.0e-6;
-    const r = Math.round(data[stride + 0] * 255 - eps);
-    const g = Math.round(data[stride + 1] * 255 - eps);
-    const b = Math.round(data[stride + 2] * 255 - eps);
-    const a = Math.round(data[stride + 3] * 255 - eps);
-    return testPixelEqual(bx, by, r, g, b, a);
-  };
+  // Actual testing
+  
 
   const combine = function(a, b) {
     return {
@@ -854,8 +907,8 @@ void main() {
 
   const bx = config.textureWidth * 0.5;
   const by = config.textureHeight * 0.5;
-  const testResult1 = testPixelEqualBuffer(bx, by);
-  const testResult2 = testPixelEqualBuffer(config.textureWidth - 1, config.textureHeight - 1);
+  const testResult1 = testPixelEqualBuffer(dataTextureBuffer, renderBuffer, bx, by);
+  const testResult2 = testPixelEqualBuffer(dataTextureBuffer, renderBuffer, config.textureWidth - 1, config.textureHeight - 1);
   let testResult = combine(testResult1, testResult2);
   /*
   let testResult = {
@@ -865,7 +918,7 @@ void main() {
   */
   for (let bx = 0; bx < config.textureWidth; bx++) {
     for (let by = 0; by < config.textureWidth; by++) {
-      const newTestResult = testPixelEqualBuffer(bx, by);
+      const newTestResult = testPixelEqualBuffer(dataTextureBuffer, renderBuffer, bx, by);
       testResult = combine(testResult, newTestResult);
       if (testResult.success) {
         testResult.text = '';
@@ -876,46 +929,7 @@ void main() {
     testResult.text = 'All ' + config.textureWidth + "x" + config.textureHeight + ' pixels passed: ';
   }
 
-  const dataURL = setup.canvas.toDataURL();
-
-  const h1 = document.createElement('h1');
-
-  document.body.appendChild(h1);
-
-  h1.innerHTML = 'Texture Render Test';
-
-  const groupResult = document.createElement('div');
-
-  groupResult.style = "display: inline; position: relative; top: -" + config.logHeight * 0.5 + "px;";
-
-  document.body.appendChild(groupResult);
-
-  const testResultElement = document.createElement('span');
-
-  const testResultIcon = document.createElement('img');
-
-  if (testResult.success) {
-    testResultElement.innerHTML = ' Test OK: ' + testResult.text;
-    testResultIcon.src = "art/images/icons/ok.svg";
-  } else {
-    testResultElement.innerHTML = ' Test FAIL: ' + testResult.text;
-    testResultIcon.src = "art/images/icons/fail.svg";
-  }
-
-  testResultIcon.height = 20;
-
-  groupResult.appendChild(testResultIcon);
-
-  groupResult.appendChild(testResultElement);
-
-  const img = document.createElement('img');
-
-  document.body.appendChild(img);
-
-  img.src = dataURL;
-  img.width = config.logWidth;
-  img.height = config.logHeight;
-
+  reportResults(setup, testResult);
 
   //renderer.setSize(config.testWidth, config.testHeight);
 };
