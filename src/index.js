@@ -797,6 +797,11 @@ void main() {
 
   renderer.render(setup.scene, setup.camera);
 
+  // Note: must be done after render. Can as well just be hidden I guess.
+  setup.canvas.style =
+    "width: " + config.testWidth + "px;" +
+    "height: " + config.testHeight + "px;";
+
   // Actual testing
   const rt = new THREE.WebGLRenderTarget(config.textureWidth, config.textureHeight);
   const buffer = new Uint8Array(config.floatSize * dataTextureSize);
@@ -832,21 +837,44 @@ void main() {
 
   const testPixelEqualBuffer = function(bx, by) {
     const stride = (by * config.textureHeight + bx) * config.floatSize;
-    const r = Math.floor(data[stride + 0] * 255);
-    const g = Math.floor(data[stride + 1] * 255);
-    const b = Math.floor(data[stride + 2] * 255);
-    const a = Math.floor(data[stride + 3] * 255);
+    const eps = 1.0e-6;
+    const r = Math.round(data[stride + 0] * 255 - eps);
+    const g = Math.round(data[stride + 1] * 255 - eps);
+    const b = Math.round(data[stride + 2] * 255 - eps);
+    const a = Math.round(data[stride + 3] * 255 - eps);
     return testPixelEqual(bx, by, r, g, b, a);
+  };
+
+  const combine = function(a, b) {
+    return {
+      text: a.text + "<br/>" + b.text,
+      success: a.success && b.success
+    };
   };
 
   const bx = config.textureWidth * 0.5;
   const by = config.textureHeight * 0.5;
-  const testResult = testPixelEqualBuffer(bx, by);
-
-  // Note: must be done after render.
-  setup.canvas.style =
-    "width: " + config.testWidth + "px;" +
-    "height: " + config.testHeight + "px;";
+  const testResult1 = testPixelEqualBuffer(bx, by);
+  const testResult2 = testPixelEqualBuffer(config.textureWidth - 1, config.textureHeight - 1);
+  let testResult = combine(testResult1, testResult2);
+  /*
+  let testResult = {
+    text: '',
+    success: true
+  };
+  */
+  for (let bx = 0; bx < config.textureWidth; bx++) {
+    for (let by = 0; by < config.textureWidth; by++) {
+      const newTestResult = testPixelEqualBuffer(bx, by);
+      testResult = combine(testResult, newTestResult);
+      if (testResult.success) {
+        testResult.text = '';
+      }
+    }
+  }
+  if (testResult.success) {
+    testResult.text = 'All ' + config.textureWidth + "x" + config.textureHeight + ' pixels passed: ';
+  }
 
   const dataURL = setup.canvas.toDataURL();
 
