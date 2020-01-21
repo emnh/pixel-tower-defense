@@ -22,8 +22,10 @@ const config = {
   tileHeight: 32,
   mapWidthInTiles: 32,
   mapHeightInTiles: 32,
+  mapWidthIn3DUnits: 64,
+  mapHeightIn3DUnits: 64,
   numTilesX: 64,
-  numTilesY: 95
+  numTilesY: 95,
 };
 // Terrain has width, height and depth.
 // Depth is the Y axis, i.e. up and down.
@@ -34,6 +36,8 @@ config.quadVertexShader = `
     gl_Position = vec4(position.xy, 0.0, 1.0);
   }
 `;
+const C = 50;
+config.cameraPosition = new THREE.Vector3(-C, C, -C);
 
 const prelude = function() {
   // Global PRNG: set Math.random.
@@ -245,6 +249,8 @@ const renderTerrain2D = function(setup) {
 
   const ti =
     new THREE.DataTexture(setup.tileIndexTextureData, config.mapWidthInTiles, config.mapHeightInTiles, THREE.RBGAFormat, THREE.FloatType);
+  ti.minFilter = THREE.NearestFilter;
+  ti.magFilter = THREE.NearestFilter;
   setup.terrainQuadMaterial.uniforms.tileIndexTexture = { value: ti };
   setup.terrainQuadMaterial.uniforms.tileSizeRelativeToTexture =
     { value: new THREE.Vector2(config.tileWidth / config.textureWidth, config.tileHeight / config.textureHeight ) };
@@ -252,6 +258,7 @@ const renderTerrain2D = function(setup) {
     { value: new THREE.Vector2(1.0 / config.textureWidth, 1.0 / config.textureHeight ) };
   setup.terrainQuadMaterial.uniforms.mapSizeInTiles = { value: new THREE.Vector2(config.mapWidthInTiles, config.mapHeightInTiles) };
   setup.terrainRenderTarget = new THREE.WebGLRenderTarget(config.mapHeightInPixels, config.mapWidthInPixels);
+  setup.terrainRenderTarget.anisotropy = setup.renderer.getMaxAnisotropy();
   return setup;
 };
 
@@ -261,6 +268,8 @@ const main = function(texture) {
   document.body.style = 'margin: 0px; padding: 0px; overflow: hidden;';
 
   let setup = setupRenderer(window.innerWidth, window.innerHeight, {});
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
   setup.tileTexture = texture;
   setup = renderTerrain2D(setup);
   setup = setupScreenCopyQuad(setup, setup.terrainRenderTarget.texture);
@@ -268,11 +277,22 @@ const main = function(texture) {
   setup.renderer.setRenderTarget(setup.terrainRenderTarget);
   setup.renderer.render(setup.terrainQuadScene, setup.camera);
 
+  const geo = new THREE.PlaneGeometry(config.mapWidthIn3DUnits, config.mapHeightIn3DUnits);
+  const material = new THREE.MeshStandardMaterial({ map: setup.terrainRenderTarget.texture });
+  const mesh = new THREE.Mesh(geo, material);
+  setup.scene.add(mesh);
+  mesh.rotation.x = -Math.PI / 2.0;
+  mesh.rotation.z = -Math.PI / 2.0;
+  setup.scene.add(new THREE.AmbientLight(0xFFFFFFF));
+
+  setup.camera.position.set(config.cameraPosition.x, config.cameraPosition.y, config.cameraPosition.z);
+  const scene = setup.scene;
+  setup.camera.lookAt(new THREE.Vector3(scene.position.x, scene.position.y - 12, scene.position.z));
+
   function update() {
-    //setup.terrainRenderTarget.texture.needsUpdate = true;
-    setup.screenCopyQuadMaterial.uniforms.texture.needsUpdate = true;
     setup.renderer.setRenderTarget(null);
-    setup.renderer.render(setup.screenCopyQuadScene, setup.camera);
+    //setup.renderer.render(setup.screenCopyQuadScene, setup.camera);
+    setup.renderer.render(setup.scene, setup.camera);
     requestAnimationFrame(update);
   }
 
