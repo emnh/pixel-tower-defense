@@ -102,7 +102,7 @@ const setupRenderer = function(width, height, renderOpts) {
   // We want displacementMap to affect vertex positions directly, instead of using the normal
   THREE.ShaderChunk.displacementmap_vertex = `
 #ifdef USE_DISPLACEMENTMAP
-  vec2 dmuv = vec2(transformed.xz * displacementBias + 0.5);
+  vec2 dmuv = vec2(transformed.zx * displacementBias + 0.5) * vec2(1.0, 1.0);
   if (abs(transformed.y) <= 1.0e-6) {
     transformed.y += abs(texture2D(displacementMap, dmuv).y) * displacementScale;
   }
@@ -296,7 +296,7 @@ const setupRenderTerrain2D = function(setup, chosenSet) {
       dt[stride + 1] = tile[1];
       //dt[stride + 0] = Math.floor(Math.random() * config.numTilesX);
       //dt[stride + 1] = Math.floor(Math.random() * config.numTilesY);
-      dt[stride + 2] = 0;
+      dt[stride + 2] = height;
       dt[stride + 3] = 0;
     }
   }
@@ -304,6 +304,7 @@ const setupRenderTerrain2D = function(setup, chosenSet) {
   const ti =
     new THREE.DataTexture(setup.tileIndexTextureData, config.mapWidthInTiles, config.mapHeightInTiles, THREE.RBGAFormat, THREE.FloatType);
   setDefaultTextureProperties(ti);
+  setup.tileIndexTexture = ti;
   setup.terrainQuadMaterial.uniforms.tileIndexTexture = { value: ti };
   setup.terrainQuadMaterial.uniforms.tileSizeRelativeToTexture =
     { value: new THREE.Vector2(config.tileWidth / config.textureWidth, config.tileHeight / config.textureHeight ) };
@@ -503,8 +504,21 @@ float rand(vec2 co){
   return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
 }
 
+bool isWater(float height) {
+  // TODO: uniform
+  bool isWater = height <= 0.0;
+  return isWater;
+}
+
 void main() {
   vec2 uv = gl_FragCoord.xy / resolution.xy;
+  
+  vec2 tileIndexUV = floor(uv * mapSizeInTiles) / mapSizeInTiles;
+  vec4 tileIndex = texture2D(tileIndexTexture, tileIndexUV);
+  float groundHeight = tileIndex.z;
+  if (!isWater(groundHeight)) {
+    return;
+  }
 
   float avg = 0.0;
   float avgX = 0.0;
@@ -514,6 +528,14 @@ void main() {
     for (float dy = -1.0; dy <= 1.0; dy += 1.0) {
       vec2 uv2 = fract(uv + vec2(dx, dy) / resolution.xy + vec2(1.0));
       vec4 nb = texture2D(texture, uv2);
+
+      tileIndexUV = floor(uv2 * mapSizeInTiles) / mapSizeInTiles;
+      tileIndex = texture2D(tileIndexTexture, tileIndexUV);
+      groundHeight = tileIndex.z;
+      if (!isWater(groundHeight)) {
+        continue;
+      }
+
       if (abs(abs(dx) + abs(dy) - 1.0) <= 1.0e-6) {
         avg += (nb.y - displacement.y) * 0.25;
       }
@@ -527,30 +549,32 @@ void main() {
   }
 
   if (waterFrameCount == 0.0) {
+    displacement = vec4(0.0);
+    displacement.y = 0.5;
+  }
+  if (abs(displacement.x) <= 1.0e-6 || abs(displacement.z) <= 1.0e-6) {
     float fac = 32.0;
     vec2 uv2 = floor(uv * fac) / fac;
-    float speed = sin(uv2.x) + sin(uv2.y);
-    speed = rand(uv2) + rand(uv) - 1.0;
-    //speed = distance(uv, uv2);
-    speed *= 0.1;
-    //float height = 10.0 * ((sin(uv2.x) + 1.0) / 2.0 + (sin(uv2.y) + 1.0) / 2.0);
-    //float height = rand(uv) - 0.5;
-    //displacement.y = height * rand(uv);
-    displacement.y = 0.5;
-    //displacement.y += displacement.w;
-    displacement.x = 1.0 * speed;
-    displacement.z = 1.0 * speed;
+    vec2 uv3 = fract(uv * fac);
+    float speed = rand(uv2) + rand(uv) - 1.0;
+    speed = rand(uv2) >= 0.5 ? 1.0 : -1.0;
+    speed *= 0.5 * distance(uv, uv2);
+    displacement.x += 1.0 * speed;
+    displacement.z += 1.0 * speed;
   } else {
-    //displacement.w += avg;
-    //displacement.y = mix(displacement.y, displacement.y + displacement.w, 0.5);
+    float lim = 5.0;
     if (mod(waterFrameCount, 2.0) == 0.0) {
       displacement.x += 0.1 * avgX;
+      //displacement.x = clamp(displacement.x, -lim, lim);
+      //displacement.x *= 0.999;
     } else {
       displacement.z += 0.1 * avgY;
+      //displacement.z = clamp(displacement.z, -lim, lim);
+      //displacement.z *= 0.999;
     }
-    displacement.y = mix(displacement.y, displacement.y + displacement.x + displacement.z, 0.25);
   }
-  //displacement.w *= 0.9999;
+  displacement.y = mix(displacement.y, displacement.y + displacement.x + displacement.z, 0.25);
+  //displacement.y = clamp(displacement.y, 0.0, 2.0);
 
   gl_FragColor = vec4(displacement);
 }
@@ -559,11 +583,13 @@ void main() {
   setupQuad(setup, width, height, vertexShader, fragmentShader, setup.waterRenderTarget1.texture);
   setup.waterQuadScene = setup.quadScene;
   setup.waterQuadMaterial = setup.quadMaterial;
+  setup.waterQuadMaterial.uniforms.tileIndexTexture = { value: setup.tileIndexTexture };
+  setup.waterQuadMaterial.uniforms.mapSizeInTiles = { value: new THREE.Vector2(config.mapWidthInTiles, config.mapHeightInTiles) };
   let waterFrameCount = 0;
   setup.updaters.push(function(frameCount) {
     const material = setup.waterQuadMaterial;
     material.uniforms.accumTime.value += material.uniforms.deltaTime.value;
-    const fixedTime = 0.2;
+    const fixedTime = 0.4; // milliseconds
     let count = 0;
     //console.log(material.uniforms.accumTime.value);
     while (material.uniforms.accumTime.value >= fixedTime) {
