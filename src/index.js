@@ -9,6 +9,7 @@ const uniqueTerrain = require('./uniqueTerrain.js').uniqueTerrain;
 const sets = require('./terrainSets.js').terrainSets;
 const heightMap = require('./heightMap.js').heightMap;
 const tiles = require('./tiles.js');
+const Stats = require('stats-js');
 
 const config = {
   floatSize: 4,
@@ -112,7 +113,12 @@ const setupRenderer = function(width, height, renderOpts) {
   // DOM element.
   container.appendChild(renderer.domElement);
 
+  const stats = new Stats();
+  stats.showPanel(0); // 0: fps, 1: ms, 2: mb, 3+: custom
+  container.appendChild(stats.dom);
+
   return {
+    stats: stats,
     camera: camera,
     container: container,
     scene: scene,
@@ -557,9 +563,9 @@ void main() {
   setup.updaters.push(function(frameCount) {
     const material = setup.waterQuadMaterial;
     material.uniforms.accumTime.value += material.uniforms.deltaTime.value;
-    const fixedTime = 0.1;
+    const fixedTime = 0.2;
     let count = 0;
-    console.log(material.uniforms.accumTime.value);
+    //console.log(material.uniforms.accumTime.value);
     while (material.uniforms.accumTime.value >= fixedTime) {
       const rts = setup.waterRenderTargets;
       const wrt = rts[waterFrameCount % 2];
@@ -574,7 +580,7 @@ void main() {
       waterFrameCount++;
       count++;
     }
-    console.log(count);
+    //console.log(count);
 
     // TODO: maybe relocate this line
     const rts = setup.waterRenderTargets;
@@ -618,6 +624,7 @@ const main = function(texture) {
   let frameCount = 0;
 
   function update() {
+    setup.stats.begin();
     for (let i = 0; i < setup.updaters.length; i++) {
       setup.updaters[i](frameCount);
     }
@@ -630,6 +637,7 @@ const main = function(texture) {
     //setup.renderer.render(setup.screenCopyQuadScene, setup.camera);
     setup.renderer.render(setup.scene, setup.camera);
     frameCount++;
+    setup.stats.end();
     requestAnimationFrame(update);
   }
 
