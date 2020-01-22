@@ -26,8 +26,8 @@ const config = {
   mapHeightIn3DUnits: 64,
   numTilesX: 64,
   numTilesY: 95,
-  waterWidthInPixels: 256,
-  waterHeightInPixels: 256,
+  waterWidthInPixels: 1024,
+  waterHeightInPixels: 1024,
   mapDetailX: 32,
   mapDetailY: 32
 };
@@ -102,7 +102,9 @@ const setupRenderer = function(width, height, renderOpts) {
   THREE.ShaderChunk.displacementmap_vertex = `
 #ifdef USE_DISPLACEMENTMAP
   vec2 dmuv = vec2(transformed.xz * displacementBias + 0.5);
-	transformed += texture2D(displacementMap, dmuv).xyz * displacementScale;
+  if (abs(transformed.y) <= 1.0e-6) {
+    transformed.y += abs(texture2D(displacementMap, dmuv).y) * displacementScale;
+  }
 #endif
 `;
 
@@ -133,7 +135,8 @@ const setupQuad = function(setup, width, height, vertexShader, fragmentShader, t
           texture: { value: texture },
           frameCount: { value: -1 },
           time: { value: 0.0 },
-          deltaTime: { value: 0.0 }
+          deltaTime: { value: 0.0 },
+          accumTime: { value: 0.0 }
         },
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
@@ -145,7 +148,8 @@ const setupQuad = function(setup, width, height, vertexShader, fragmentShader, t
   
   const startTime = performance.now() / 1000.0;
   setup.updaters.push(function() {
-    material.uniforms.deltaTime.value = Math.max(1.0 / 30.0, performance.now() / 1000.0 - material.uniforms.time.value);
+    // material.uniforms.deltaTime.value = Math.max(1.0 / 30.0, performance.now() / 1000.0 - material.uniforms.time.value);
+    material.uniforms.deltaTime.value = performance.now() / 1000.0 - material.uniforms.time.value;
     material.uniforms.time.value = performance.now() / 1000.0 - startTime;
     material.uniforms.frameCount.value++;
   });
@@ -306,12 +310,22 @@ const setupRenderTerrain2D = function(setup, chosenSet) {
 };
 
 const addPlane = function(setup, scene) {
-  const geo = new THREE.PlaneGeometry(config.mapWidthIn3DUnits, config.mapHeightIn3DUnits);
+  const geo =
+    new THREE.PlaneBufferGeometry(
+      config.mapWidthIn3DUnits,
+      config.mapHeightIn3DUnits,
+      config.mapWidthInTiles * config.mapDetailX,
+      config.mapHeightInTiles * config.mapDetailY);
   const material = new THREE.MeshStandardMaterial({ map: setup.terrainRenderTarget.texture });
+  const matrix =  new THREE.Matrix4().makeRotationX(-Math.PI / 2.0);
+  const matrix2 =  new THREE.Matrix4().makeRotationZ(-Math.PI / 2.0);
+  geo.applyMatrix(matrix2);
+  geo.applyMatrix(matrix);
   const mesh = new THREE.Mesh(geo, material);
   scene.add(mesh);
-  mesh.rotation.x = -Math.PI / 2.0;
-  mesh.rotation.z = -Math.PI / 2.0;
+  //mesh.rotation.x = -Math.PI / 2.0;
+  //mesh.rotation.z = -Math.PI / 2.0;
+  setup.terrainMeshWater = mesh;
   return setup;
 };
 
@@ -323,8 +337,11 @@ const addCubes = function(setup, scene, heightScale, yScale) {
   const protoBox =
     new THREE.BoxGeometry(
         sz, sz, sz,
-        //XSEGMENTRES, 1.0, YSEGMENTRES);
         1.0, 1.0, 1.0);
+  const protoPlane =
+    new THREE.PlaneGeometry(
+        sz, sz,
+        1.0, 1.0);
 
   const geo = new THREE.Geometry();
 
@@ -340,69 +357,76 @@ const addCubes = function(setup, scene, heightScale, yScale) {
   const xMax = config.mapWidthInTiles;
   const yMax = config.mapHeightInTiles;
 
-  const uvWidth = 1.0 / config.mapWidthInTiles;
-  const uvHeight = 1.0 / config.mapHeightInTiles;
-
   const width = config.mapWidthIn3DUnits - 2;
   const height = config.mapHeightIn3DUnits - 2;
 
   const clipY = yScale;
+
+  const addBox = function(proto, x, y, xd, yd, depth, maxDepth, uvWidth, uvHeight, mapDetailX, mapDetailY) {
+    const mesh = new THREE.Mesh(proto, new THREE.MeshBasicMaterial());
+
+    const remaining = Math.min(yScale, maxDepth + yScale - depth);
+
+    for (let i = 0; i < proto.faceVertexUvs[0].length; i++) {
+      const uvOrig = uvs[i];
+      const uv = proto.faceVertexUvs[0][i];
+
+      const flipX = v => (1.0 - v) + x * mapDetailX + xd;
+      const flipY = v => (1.0 - v) + y * mapDetailY + yd;
+      uv[0].x = (flipX(uvOrig[0].x)) * uvWidth;
+      uv[0].y = (flipY(uvOrig[0].y)) * uvHeight;
+      uv[1].x = (flipX(uvOrig[1].x)) * uvWidth;
+      uv[1].y = (flipY(uvOrig[1].y)) * uvHeight;
+      uv[2].x = (flipX(uvOrig[2].x)) * uvWidth;
+      uv[2].y = (flipY(uvOrig[2].y)) * uvHeight;
+    }
+    mesh.scale.x = width / (xMax - 1) / Math.max(1, mapDetailX - 1);
+    mesh.scale.y = yScale / Math.max(1, mapDetailX - 1);
+    mesh.scale.z = height / (yMax - 1) / Math.max(1, mapDetailY - 1);
+    const xpos = (x / (xMax - 1) - 0.5) * width + (xd + 0.0) * mesh.scale.x;
+    const zpos = (y / (yMax - 1) - 0.5) * height + (yd + 0.0) * mesh.scale.z;
+    mesh.position.x = -xpos;
+    // Adjust such that the top of the box is at maxDepth
+    mesh.position.y = depth - yScale * 0.5;
+    mesh.position.z = zpos;
+    if (proto === protoPlane) {
+      mesh.position.y = 0.0;
+      mesh.rotation.x = -Math.PI * 0.5;
+      //mesh.rotation.z = -Math.PI * 0.5;
+    }
+    geo.mergeMesh(mesh);
+  };
 
   for (let x = 0; x < xMax; x++) {
     for (let y = 0; y < yMax; y++) {
       const maxDepth = hmul * getTerrainHeight(x, y);
       //for (let depth = -2 + maxDepth % yScale; depth < maxDepth + yScale; depth += yScale) {
       for (let depth = maxDepth; depth + yScale >= -clipY; depth -= yScale) {
-        const mesh = new THREE.Mesh(protoBox, new THREE.MeshBasicMaterial());
-        const xpos = (x / (xMax - 1) - 0.5) * width;
-        const zpos = (y / (yMax - 1) - 0.5) * height;
-
-        const remaining = Math.min(yScale, maxDepth + yScale - depth);
-        //mesh.scale.y = yScale * remaining;
-        mesh.scale.y = yScale;
-
-        for (let i = 0; i < protoBox.faceVertexUvs[0].length; i++) {
-          const uvOrig = uvs[i];
-          const uv = protoBox.faceVertexUvs[0][i];
-
-          /*
-          const left = 0;
-          const right = 1;
-          const topFace = 2;
-          const bottomFace = 3;
-          const back = 4;
-          const front = 5;
-          // Scale vertical UVs so we get partial tiles instead of stretched tiles
-          const face = Math.floor(i * 0.5);
-          const scaleX = x =>
-            (face == left || face == right) ?
-              x / mesh.scale.y : x;
-          const scaleY = x =>
-            (face == back || face == front) ?
-              x / mesh.scale.y : x;
-          */
-
-          const flipX = x => (1.0 - x);
-          const flipY = x => (1.0 - x);
-          uv[0].x = (flipX(uvOrig[0].x) + x) * uvWidth;
-          uv[0].y = (flipY(uvOrig[0].y) + y) * uvHeight;
-          uv[1].x = (flipX(uvOrig[1].x) + x) * uvWidth;
-          uv[1].y = (flipY(uvOrig[1].y) + y) * uvHeight;
-          uv[2].x = (flipX(uvOrig[2].x) + x) * uvWidth;
-          uv[2].y = (flipY(uvOrig[2].y) + y) * uvHeight;
+        /*
+        if (depth === maxDepth && depth <= 0.1) {
+          const uvWidth = 1.0 / (config.mapWidthInTiles * config.mapDetailX);
+          const uvHeight = 1.0 / (config.mapHeightInTiles * config.mapDetailY);
+          for (let xd = 0; xd < config.mapDetailX; xd++) {
+            for (let yd = 0; yd < config.mapDetailY; yd++) {
+              addBox(protoPlane, x, y, xd, yd, depth, maxDepth, uvWidth, uvHeight, config.mapDetailX, config.mapDetailY);
+            }
+          }
         }
-        mesh.scale.x = width / (xMax - 1);
-        mesh.scale.z = height / (yMax - 1);
-        mesh.position.x = -xpos;
-        // Adjust such that the top of the box is at maxDepth
-        mesh.position.y = depth - yScale / 2.0;
-        mesh.position.z = zpos;
-        geo.mergeMesh(mesh);
+        */
+        {
+          const uvWidth = 1.0 / (config.mapWidthInTiles);
+          const uvHeight = 1.0 / (config.mapHeightInTiles);
+          addBox(protoBox, x, y, 0, 0, depth, maxDepth, uvWidth, uvHeight, 1, 1);
+        }
       }
     }
   }
+  
 
   const material = new THREE.MeshStandardMaterial({
+    map: setup.terrainRenderTarget.texture,
+  });
+  const waterMaterial = new THREE.MeshStandardMaterial({
     map: setup.terrainRenderTarget.texture,
     displacementMap: setup.waterRenderTarget1.texture,
     // TODO: support mapWidth != mapHeight. rectangular maps.
@@ -410,21 +434,16 @@ const addCubes = function(setup, scene, heightScale, yScale) {
     displacementScale: 1.0
   });
 
-  /*
-  const customMaterial = new THREE.ShaderMaterial(
-    {
-      uniforms: material.uniforms,
-      vertexShader: material.vertexShader,
-      fragmentShader: material.fragmentShader
-    }
-  );
-  */
-
   material.clippingPlanes = [new THREE.Plane(new THREE.Vector3(0, 1, 0), clipY)];
-  const plane = new THREE.Mesh(geo, material);
+  const bgeo = new THREE.BufferGeometry();
+  bgeo.fromGeometry(geo);
+  const plane = new THREE.Mesh(bgeo, material);
   plane.rotation.y = Math.PI / 2.0;
   scene.add(plane);
   setup.terrainMesh = plane;
+
+  addPlane(setup, scene);
+  setup.terrainMeshWater.material = waterMaterial;
 
   return setup;
 };
@@ -435,8 +454,8 @@ const setupWater = function(setup) {
   // TODO: function to get default options
   setup.waterRenderTarget1 =
     new THREE.WebGLRenderTarget(width, height, {
-			wrapS: THREE.ClampToEdgeWrapping,
-			wrapT: THREE.ClampToEdgeWrapping,
+			wrapS: THREE.RepeatWrapping,
+			wrapT: THREE.RepeatWrapping,
 			minFilter: THREE.NearestFilter,
 			magFilter: THREE.NearestFilter,
 			format: THREE.RGBAFormat,
@@ -446,8 +465,8 @@ const setupWater = function(setup) {
 		});
   setup.waterRenderTarget2 =
     new THREE.WebGLRenderTarget(width, height, {
-			wrapS: THREE.ClampToEdgeWrapping,
-			wrapT: THREE.ClampToEdgeWrapping,
+			wrapS: THREE.RepeatWrapping,
+			wrapT: THREE.RepeatWrapping,
 			minFilter: THREE.NearestFilter,
 			magFilter: THREE.NearestFilter,
 			format: THREE.RGBAFormat,
@@ -470,7 +489,7 @@ uniform vec2 pixelSizeRelativeToTexture;
 uniform vec2 mapSizeInTiles;
 uniform sampler2D texture;
 uniform sampler2D tileIndexTexture;
-uniform float frameCount;
+uniform float waterFrameCount;
 uniform float time;
 uniform float deltaTime;
 
@@ -482,25 +501,50 @@ void main() {
   vec2 uv = gl_FragCoord.xy / resolution.xy;
 
   float avg = 0.0;
+  float avgX = 0.0;
+  float avgY = 0.0;
+  vec4 displacement = texture2D(texture, uv);
   for (float dx = -1.0; dx <= 1.0; dx += 1.0) {
     for (float dy = -1.0; dy <= 1.0; dy += 1.0) {
-      if (abs(dx) + abs(dy) == 1.0) {
-        vec2 uv2 = fract(uv + vec2(dx, dy) / resolution.xy + vec2(1.0));
-        vec4 nb = texture2D(texture, uv2);
-        avg += nb.y * 0.25;
+      vec2 uv2 = fract(uv + vec2(dx, dy) / resolution.xy + vec2(1.0));
+      vec4 nb = texture2D(texture, uv2);
+      if (abs(abs(dx) + abs(dy) - 1.0) <= 1.0e-6) {
+        avg += (nb.y - displacement.y) * 0.25;
+      }
+      if (abs(abs(dx) - 1.0) <= 1.0e-6) {
+        avgX += (nb.y - displacement.y) * 0.5;
+      }
+      if (abs(abs(dy) - 1.0) <= 1.0e-6) {
+        avgY += (nb.y - displacement.y) * 0.5;
       }
     }
   }
 
-  vec4 displacement = texture2D(texture, uv);
-  if (frameCount == 0.0) {
-    //float height = (sin(uv.x) + 1.0) / 2.0 + (sin(uv.y) + 1.0) / 2.0;
-    float height = rand(uv) - 0.5;
-    displacement.y = height;
+  if (waterFrameCount == 0.0) {
+    float fac = 32.0;
+    vec2 uv2 = floor(uv * fac) / fac;
+    float speed = sin(uv2.x) + sin(uv2.y);
+    speed = rand(uv2) + rand(uv) - 1.0;
+    //speed = distance(uv, uv2);
+    speed *= 0.1;
+    //float height = 10.0 * ((sin(uv2.x) + 1.0) / 2.0 + (sin(uv2.y) + 1.0) / 2.0);
+    //float height = rand(uv) - 0.5;
+    //displacement.y = height * rand(uv);
+    displacement.y = 0.5;
+    //displacement.y += displacement.w;
+    displacement.x = 1.0 * speed;
+    displacement.z = 1.0 * speed;
   } else {
-    displacement.w += 0.01 * (avg - displacement.y) * deltaTime;
-    displacement.y += 0.5 * displacement.w;
+    //displacement.w += avg;
+    //displacement.y = mix(displacement.y, displacement.y + displacement.w, 0.5);
+    if (mod(waterFrameCount, 2.0) == 0.0) {
+      displacement.x += 0.1 * avgX;
+    } else {
+      displacement.z += 0.1 * avgY;
+    }
+    displacement.y = mix(displacement.y, displacement.y + displacement.x + displacement.z, 0.25);
   }
+  //displacement.w *= 0.9999;
 
   gl_FragColor = vec4(displacement);
 }
@@ -509,6 +553,34 @@ void main() {
   setupQuad(setup, width, height, vertexShader, fragmentShader, setup.waterRenderTarget1.texture);
   setup.waterQuadScene = setup.quadScene;
   setup.waterQuadMaterial = setup.quadMaterial;
+  let waterFrameCount = 0;
+  setup.updaters.push(function(frameCount) {
+    const material = setup.waterQuadMaterial;
+    material.uniforms.accumTime.value += material.uniforms.deltaTime.value;
+    const fixedTime = 0.1;
+    let count = 0;
+    console.log(material.uniforms.accumTime.value);
+    while (material.uniforms.accumTime.value >= fixedTime) {
+      const rts = setup.waterRenderTargets;
+      const wrt = rts[waterFrameCount % 2];
+      const wrt2 = rts[(waterFrameCount + 1) % 2];
+      setup.waterQuadMaterial.uniforms.texture.value = wrt2.texture;
+      //setup.renderer.setSize(wrt.width, wrt.height);
+      
+      material.uniforms.accumTime.value -= fixedTime;
+      material.uniforms.waterFrameCount = { value: waterFrameCount };
+      setup.renderer.setRenderTarget(wrt);
+      setup.renderer.render(setup.waterQuadScene, setup.camera);
+      waterFrameCount++;
+      count++;
+    }
+    console.log(count);
+
+    // TODO: maybe relocate this line
+    const rts = setup.waterRenderTargets;
+    const wrt = rts[waterFrameCount % 2];
+    setup.terrainMeshWater.material.displacementMap = wrt.texture;
+  });
 
   return setup;
 };
@@ -547,19 +619,13 @@ const main = function(texture) {
 
   function update() {
     for (let i = 0; i < setup.updaters.length; i++) {
-      setup.updaters[i]();
+      setup.updaters[i](frameCount);
     }
-    const rts = setup.waterRenderTargets;
-    const wrt = rts[frameCount % 2];
-    const wrt2 = rts[(frameCount + 1) % 2];
-    setup.waterQuadMaterial.uniforms.texture.value = wrt2.texture;
-    setup.renderer.setSize(wrt.width, wrt.height);
-    setup.renderer.setRenderTarget(wrt);
-    setup.renderer.render(setup.waterQuadScene, setup.camera);
     
-    setup.terrainMesh.material.displacementMap = wrt.texture;
-
-    setup.renderer.setSize(window.innerWidth, window.innerHeight);
+    if (setup.renderer.domElement.width != window.innerWidth ||
+        setup.renderer.domElement.height != window.innerHeight) {
+      setup.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
     setup.renderer.setRenderTarget(null);
     //setup.renderer.render(setup.screenCopyQuadScene, setup.camera);
     setup.renderer.render(setup.scene, setup.camera);
