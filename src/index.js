@@ -283,7 +283,6 @@ const setupRenderTerrain2D = function(setup, chosenSet) {
   const dt = setup.tileIndexTextureData;
 
   // Fill in terrain indices
-  // TODO: terrain set as parameter
   const validTerrain = getTerrainTileSet(chosenSet);
   console.log(validTerrain);
   for (let x = 0; x < config.mapWidthInTiles; x++) {
@@ -506,7 +505,7 @@ float rand(vec2 co){
 
 bool isWater(float height) {
   // TODO: uniform
-  bool isWater = height <= 0.0;
+  bool isWater = height <= 0.1;
   return isWater;
 }
 
@@ -537,20 +536,20 @@ void main() {
       }
 
       if (abs(abs(dx) + abs(dy) - 1.0) <= 1.0e-6) {
-        avg += (nb.y - displacement.y) * 0.25;
+        avg += (nb.w - displacement.w) * 0.25;
       }
       if (abs(abs(dx) - 1.0) <= 1.0e-6) {
-        avgX += (nb.y - displacement.y) * 0.5;
+        avgX += (nb.w - displacement.w) * 0.5;
       }
       if (abs(abs(dy) - 1.0) <= 1.0e-6) {
-        avgY += (nb.y - displacement.y) * 0.5;
+        avgY += (nb.w - displacement.w) * 0.5;
       }
     }
   }
 
   if (waterFrameCount == 0.0) {
     displacement = vec4(0.0);
-    displacement.y = 0.5;
+    displacement.w = 0.5;
   }
   if (abs(displacement.x) <= 1.0e-6 || abs(displacement.z) <= 1.0e-6) {
     float fac = 32.0;
@@ -559,22 +558,23 @@ void main() {
     float speed = rand(uv2) + rand(uv) - 1.0;
     speed = rand(uv2) >= 0.5 ? 1.0 : -1.0;
     speed *= 0.5 * distance(uv, uv2);
-    displacement.x += 1.0 * speed;
-    displacement.z += 1.0 * speed;
+    if (abs(displacement.x) <= 1.0e-6) {
+      displacement.x += 1.0 * speed;
+    }
+    if (abs(displacement.z) <= 1.0e-6) {
+      displacement.z += 1.0 * speed;
+    }
   } else {
     float lim = 5.0;
     if (mod(waterFrameCount, 2.0) == 0.0) {
       displacement.x += 0.1 * avgX;
-      //displacement.x = clamp(displacement.x, -lim, lim);
-      //displacement.x *= 0.999;
     } else {
       displacement.z += 0.1 * avgY;
-      //displacement.z = clamp(displacement.z, -lim, lim);
-      //displacement.z *= 0.999;
     }
   }
-  displacement.y = mix(displacement.y, displacement.y + displacement.x + displacement.z, 0.25);
-  //displacement.y = clamp(displacement.y, 0.0, 2.0);
+  displacement.w = mix(displacement.w, displacement.w + displacement.x + displacement.z, 0.25);
+  
+  displacement.y = displacement.w;
 
   gl_FragColor = vec4(displacement);
 }
