@@ -239,7 +239,7 @@ const getTerrainHeight = function(x, y) {
   return ret;
 }
 
-const renderTerrain2D = function(setup) {
+const setupRenderTerrain2D = function(setup, chosenSet) {
   setup = setupTerrainQuad(setup);
   setup.terrainQuadScene = setup.quadScene;
   setup.terrainQuadMaterial = setup.quadMaterial;
@@ -248,12 +248,12 @@ const renderTerrain2D = function(setup) {
 
   // Fill in terrain indices
   // TODO: terrain set as parameter
-  const validTerrain = getTerrainTileSet(sets[16]);
+  const validTerrain = getTerrainTileSet(chosenSet);
   console.log(validTerrain);
   for (let x = 0; x < config.mapWidthInTiles; x++) {
     for (let y = 0; y < config.mapHeightInTiles; y++) {
       // TODO: check that it works for rectangular map
-      const stride = (y * config.mapHeightInTiles + x) * config.floatSize;
+      const stride = (y * config.mapWidthInTiles + x) * config.floatSize;
       const height = getTerrainHeight(x, y);
       const tile = validTerrain[Math.floor(height * validTerrain.length)];
       dt[stride + 0] = tile[0];
@@ -286,7 +286,7 @@ const main = function(texture) {
 
   let setup = setupRenderer(window.innerWidth, window.innerHeight, {});
   setup.tileTexture = setDefaultTextureProperties(texture);
-  setup = renderTerrain2D(setup);
+  setup = setupRenderTerrain2D(setup, sets[16]);
   setup = setupScreenCopyQuad(setup, setup.terrainRenderTarget.texture);
 
   setup.renderer.setRenderTarget(setup.terrainRenderTarget);
@@ -1110,7 +1110,7 @@ const TestTileTexture = {
       };
     reportResults(setup, testResult);
 
-    const renderBufferContainingAllTiles = Float32Array.from(setup.renderBuffer);
+    setup.renderBufferContainingAllTiles = Float32Array.from(setup.renderBuffer);
 
     // Now render the test tile
     setup = setupRenderTarget(setup, config.tileWidth, config.tileHeight);
@@ -1138,7 +1138,7 @@ const TestTileTexture = {
         1);
 
     // Restore the first renderBuffer
-    setup.renderBuffer = renderBufferContainingAllTiles;
+    setup.renderBuffer = setup.renderBufferContainingAllTiles;
     const testResult2 = compareBuffers(setup, setup.tileTextureBuffer, setup.renderBuffer, config.textureWidth, config.textureHeight);
     testResult2.header = 'Compare Test Tile to position in rendered Tile Sheet';
     reportResults(setup, testResult2);
@@ -1153,7 +1153,7 @@ const TestTileTexture = {
         0,
         config.tileWidth,
         config.tileHeight,
-        renderBufferContainingAllTiles,
+        setup.renderBufferContainingAllTiles,
         setup.cobalt_stone_11_xtile * config.tileWidth,
         setup.cobalt_stone_11_ytile * config.tileHeight,
         config.textureWidth,
@@ -1166,6 +1166,71 @@ const TestTileTexture = {
     const testResult3 = compareBuffers(setup, setup.testTileTextureBuffer, setup.renderBuffer, config.tileWidth, config.tileHeight);
     testResult3.header = 'Render Test Tile Offset from rendered Tile Sheet';
     reportResults(setup, testResult3);
+    return setup;
+  }
+};
+
+const TestRenderTerrain2D = {
+  test: function(setup) {
+    setup = setupRenderTerrain2D(setup, sets[16]);
+    setup = setupScreenCopyQuad(setup, setup.terrainRenderTarget.texture);
+
+    setup.renderer.setRenderTarget(setup.terrainRenderTarget);
+    setup.renderer.render(setup.terrainQuadScene, setup.camera);
+    //readPixels(setup, setup.terrainRenderTarget);
+
+    const width = setup.terrainRenderTarget.width;
+    const height = setup.terrainRenderTarget.height;
+    setup.screenCopyQuadMaterial.uniforms.resolution.value.set(width, height);
+    setup = setupRenderTarget(setup, width, height);
+    render(setup, setup.screenCopyQuadScene, width, height);
+    /*
+    setup.renderer.setSize(width, height);
+    setup.renderer.setRenderTarget(null);
+    setup.renderer.render(setup.screenCopyQuadScene, setup.camera);
+    */
+
+    setup.expectedTerrain2DBuffer = new Float32Array(width * height * config.floatSize);
+    const data = setup.expectedTerrain2DBuffer;
+    for (let x = 0; x < width; x++) {
+      for (let y = 0; y < height; y++) {
+        const stride = (y * width + x) * config.floatSize;
+        const xTileIndex = Math.floor(x * config.mapWidthInTiles / width);
+        const yTileIndex = Math.floor(y * config.mapHeightInTiles / height);
+        const xTileOffset = x % config.tileWidth;
+        const yTileOffset = y % config.tileHeight;
+        const stride3 = (yTileIndex * config.mapWidthInTiles + xTileIndex) * config.floatSize;
+        const ix = setup.tileIndexTextureData[stride3 + 0] * config.tileWidth + xTileOffset;
+        const iy = setup.tileIndexTextureData[stride3 + 1] * config.tileHeight + yTileOffset;
+        const stride2 = (iy * config.textureWidth + ix) * config.floatSize;
+        const r = setup.renderBufferContainingAllTiles[stride2 + 0];
+        const g = setup.renderBufferContainingAllTiles[stride2 + 1];
+        const b = setup.renderBufferContainingAllTiles[stride2 + 2];
+        const a = setup.renderBufferContainingAllTiles[stride2 + 3];
+        data[stride + 0] = r;
+        data[stride + 1] = g;
+        data[stride + 2] = b;
+        data[stride + 3] = a;
+      }
+    }
+    const dataTexture =
+      new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.FloatType);
+
+    const testResult = compareBuffers(setup, setup.expectedTerrain2DBuffer, setup.renderBuffer, width, height);
+    testResult.header = 'Render Terrain 2D';
+    reportResults(setup, testResult);
+
+    setup.screenCopyQuadMaterial.uniforms.texture.value = dataTexture;
+    render(setup, setup.screenCopyQuadScene, width, height);
+    const testResult2 = 
+      {
+        text: 'No test ',
+        success: true,
+        header: 'Expected Render Terrain 2D'
+      };
+    reportResults(setup, testResult2);
+
+    return setup;
   }
 };
 
@@ -1244,7 +1309,6 @@ void main() {
 };
 
 const setupRenderTarget = function(setup, width, height) {
-  // setup.renderTarget = new THREE.WebGLRenderTarget(width, height);
   setup.renderTarget =
     new THREE.WebGLRenderTarget(width, height, {
 			wrapS: THREE.ClampToEdgeWrapping,
@@ -1322,6 +1386,19 @@ const reloadBufferTileToTexture =
   return setup;
 };
 
+/*
+const readPixels = function(setup, renderTarget) {
+  const width = renderTarget.width;
+  const height = renderTarget.height;
+  const renderBuffer = new Uint8Array(config.floatSize * width * height);
+  setup.renderer.readRenderTargetPixels(setup.terrainRenderTarget, 0, 0, width, height, renderBuffer);
+  for (let i = 0; i < renderBuffer.length; i++) {
+    setup.renderBuffer = renderBuffer[i] / 255.0;
+  }
+  return setup;
+};
+*/
+
 // TEST PART: TEST RUNNER
 
 const test = function(texture, testTileTexture) {
@@ -1342,6 +1419,7 @@ const test = function(texture, testTileTexture) {
 
   // Actual tests
   TestTileTexture.test(setup);
+  TestRenderTerrain2D.test(setup);
 };
 
 try {
