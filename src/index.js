@@ -584,8 +584,8 @@ void main() {
   float lim = 2.0;
   displacement.w = clamp(displacement.w, -lim, lim);
   
-  //displacement.y = (displacement.w + lim) * 0.5;
-  displacement.y = displacement.w;
+  displacement.y = (displacement.w + lim) * 0.5;
+  //displacement.y = displacement.w;
 
   float mapWidth = 64.0;
   float mapHeight = mapWidth;
@@ -607,8 +607,9 @@ void main() {
     vec3 pos = vec3((uv.x - 0.5) * mapWidth, displacement.y, (uv.y - 0.5) * mapHeight);
     vec3 incomingRay = -normalize(pos * vec3(1.0, 1.0, 1.0) - cameraPos);
     vec3 refractionDir = refract(incomingRay, normal, 1.0 / 1.333);
-    vec2 nuv = (pos - refractionDir * (pos.y / refractionDir.y)).xz / vec2(mapWidth, mapHeight) + vec2(0.5);
+    vec2 nuv = (pos - sign(pos.y) * refractionDir * (abs(pos.y) / abs(refractionDir.y))).xz / vec2(mapWidth, mapHeight) + vec2(0.5);
     vec3 color = texture2D(terrainTexture, nuv).rgb;
+    color *= (0.5 + dot(-light, normal));
     gl_FragColor = vec4(color, 1.0);
   } else if (isNormals > 0.5) {
     gl_FragColor = vec4(normal, 1.0);
