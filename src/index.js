@@ -26,6 +26,10 @@ const config = {
   mapHeightIn3DUnits: 64,
   numTilesX: 64,
   numTilesY: 95,
+  waterWidthInPixels: 256,
+  waterHeightInPixels: 256,
+  mapDetailX: 32,
+  mapDetailY: 32
 };
 // Terrain has width, height and depth.
 // Depth is the Y axis, i.e. up and down.
@@ -94,6 +98,14 @@ const setupRenderer = function(width, height, renderOpts) {
   // Set options
   renderer.localClippingEnabled = true;
 
+  // We want displacementMap to affect vertex positions directly, instead of using the normal
+  THREE.ShaderChunk.displacementmap_vertex = `
+#ifdef USE_DISPLACEMENTMAP
+  vec2 dmuv = vec2(transformed.xz * displacementBias + 0.5);
+	transformed += texture2D(displacementMap, dmuv).xyz * displacementScale;
+#endif
+`;
+
   // Attach the renderer-supplied
   // DOM element.
   container.appendChild(renderer.domElement);
@@ -105,7 +117,8 @@ const setupRenderer = function(width, height, renderOpts) {
     renderer: renderer,
     canvas: renderer.domElement,
     rendererWidth: width,
-    rendererHeight: height
+    rendererHeight: height,
+    updaters: []
   };
 };
 
@@ -117,7 +130,10 @@ const setupQuad = function(setup, width, height, vertexShader, fragmentShader, t
       {
         uniforms: {
           resolution: { value: new THREE.Vector2(width, height) },
-          texture: { value: texture }
+          texture: { value: texture },
+          frameCount: { value: -1 },
+          time: { value: 0.0 },
+          deltaTime: { value: 0.0 }
         },
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
@@ -126,6 +142,13 @@ const setupQuad = function(setup, width, height, vertexShader, fragmentShader, t
       }
     );
   setup.quadMaterial = material;
+  
+  const startTime = performance.now() / 1000.0;
+  setup.updaters.push(function() {
+    material.uniforms.deltaTime.value = Math.max(1.0 / 30.0, performance.now() / 1000.0 - material.uniforms.time.value);
+    material.uniforms.time.value = performance.now() / 1000.0 - startTime;
+    material.uniforms.frameCount.value++;
+  });
 
   const mesh = new THREE.Mesh(quad, material);
 
@@ -379,11 +402,113 @@ const addCubes = function(setup, scene, heightScale, yScale) {
     }
   }
 
-  const material = new THREE.MeshStandardMaterial({ map: setup.terrainRenderTarget.texture });
+  const material = new THREE.MeshStandardMaterial({
+    map: setup.terrainRenderTarget.texture,
+    displacementMap: setup.waterRenderTarget1.texture,
+    // TODO: support mapWidth != mapHeight. rectangular maps.
+    displacementBias: 1.0 / config.mapWidthIn3DUnits,
+    displacementScale: 1.0
+  });
+
+  /*
+  const customMaterial = new THREE.ShaderMaterial(
+    {
+      uniforms: material.uniforms,
+      vertexShader: material.vertexShader,
+      fragmentShader: material.fragmentShader
+    }
+  );
+  */
+
   material.clippingPlanes = [new THREE.Plane(new THREE.Vector3(0, 1, 0), clipY)];
   const plane = new THREE.Mesh(geo, material);
   plane.rotation.y = Math.PI / 2.0;
   scene.add(plane);
+  setup.terrainMesh = plane;
+
+  return setup;
+};
+
+const setupWater = function(setup) {
+  const width = config.waterWidthInPixels;
+  const height = config.waterHeightInPixels;
+  // TODO: function to get default options
+  setup.waterRenderTarget1 =
+    new THREE.WebGLRenderTarget(width, height, {
+			wrapS: THREE.ClampToEdgeWrapping,
+			wrapT: THREE.ClampToEdgeWrapping,
+			minFilter: THREE.NearestFilter,
+			magFilter: THREE.NearestFilter,
+			format: THREE.RGBAFormat,
+			type: ( /(iPad|iPhone|iPod)/g.test( navigator.userAgent ) ) ? THREE.HalfFloatType : THREE.FloatType,
+			stencilBuffer: false,
+			depthBuffer: false
+		});
+  setup.waterRenderTarget2 =
+    new THREE.WebGLRenderTarget(width, height, {
+			wrapS: THREE.ClampToEdgeWrapping,
+			wrapT: THREE.ClampToEdgeWrapping,
+			minFilter: THREE.NearestFilter,
+			magFilter: THREE.NearestFilter,
+			format: THREE.RGBAFormat,
+			type: ( /(iPad|iPhone|iPod)/g.test( navigator.userAgent ) ) ? THREE.HalfFloatType : THREE.FloatType,
+			stencilBuffer: false,
+			depthBuffer: false
+		});
+  //setup.waterRenderTarget1 = new THREE.WebGLRenderTarget(width, height);
+  //setup.waterRenderTarget2 = new THREE.WebGLRenderTarget(width, height);
+  setDefaultTextureProperties(setup.waterRenderTarget1.texture);
+  setDefaultTextureProperties(setup.waterRenderTarget2.texture);
+  setup.waterRenderTargets = [setup.waterRenderTarget1, setup.waterRenderTarget2];
+
+  const vertexShader = config.quadVertexShader;
+
+  const fragmentShader = `
+uniform vec2 resolution;
+uniform vec2 tileSizeRelativeToTexture;
+uniform vec2 pixelSizeRelativeToTexture;
+uniform vec2 mapSizeInTiles;
+uniform sampler2D texture;
+uniform sampler2D tileIndexTexture;
+uniform float frameCount;
+uniform float time;
+uniform float deltaTime;
+
+float rand(vec2 co){
+  return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / resolution.xy;
+
+  float avg = 0.0;
+  for (float dx = -1.0; dx <= 1.0; dx += 1.0) {
+    for (float dy = -1.0; dy <= 1.0; dy += 1.0) {
+      if (abs(dx) + abs(dy) == 1.0) {
+        vec2 uv2 = fract(uv + vec2(dx, dy) / resolution.xy + vec2(1.0));
+        vec4 nb = texture2D(texture, uv2);
+        avg += nb.y * 0.25;
+      }
+    }
+  }
+
+  vec4 displacement = texture2D(texture, uv);
+  if (frameCount == 0.0) {
+    //float height = (sin(uv.x) + 1.0) / 2.0 + (sin(uv.y) + 1.0) / 2.0;
+    float height = rand(uv) - 0.5;
+    displacement.y = height;
+  } else {
+    displacement.w += 0.01 * (avg - displacement.y) * deltaTime;
+    displacement.y += 0.5 * displacement.w;
+  }
+
+  gl_FragColor = vec4(displacement);
+}
+`;
+
+  setupQuad(setup, width, height, vertexShader, fragmentShader, setup.waterRenderTarget1.texture);
+  setup.waterQuadScene = setup.quadScene;
+  setup.waterQuadMaterial = setup.quadMaterial;
 
   return setup;
 };
@@ -410,6 +535,7 @@ const main = function(texture) {
   // Set yScale equal to xScale so that the cubes are cubes and not rectangular
   // cuboids, i.e. all dimensions are equal, given that width (xScale) and
   // height (zScale) are same.
+  setup = setupWater(setup);
   setup = addCubes(setup, setup.scene, 5.0, config.mapWidthIn3DUnits / (config.mapWidthInTiles - 1));
 
   setup.scene.add(new THREE.AmbientLight(0xFFFFFFF));
@@ -417,10 +543,27 @@ const main = function(texture) {
   const scene = setup.scene;
   setup.camera.lookAt(new THREE.Vector3(scene.position.x, scene.position.y - 16, scene.position.z));
 
+  let frameCount = 0;
+
   function update() {
+    for (let i = 0; i < setup.updaters.length; i++) {
+      setup.updaters[i]();
+    }
+    const rts = setup.waterRenderTargets;
+    const wrt = rts[frameCount % 2];
+    const wrt2 = rts[(frameCount + 1) % 2];
+    setup.waterQuadMaterial.uniforms.texture.value = wrt2.texture;
+    setup.renderer.setSize(wrt.width, wrt.height);
+    setup.renderer.setRenderTarget(wrt);
+    setup.renderer.render(setup.waterQuadScene, setup.camera);
+    
+    setup.terrainMesh.material.displacementMap = wrt.texture;
+
+    setup.renderer.setSize(window.innerWidth, window.innerHeight);
     setup.renderer.setRenderTarget(null);
     //setup.renderer.render(setup.screenCopyQuadScene, setup.camera);
     setup.renderer.render(setup.scene, setup.camera);
+    frameCount++;
     requestAnimationFrame(update);
   }
 
