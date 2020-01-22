@@ -91,6 +91,9 @@ const setupRenderer = function(width, height, renderOpts) {
   // Start the renderer.
   renderer.setSize(width, height);
 
+  // Set options
+  renderer.localClippingEnabled = true;
+
   // Attach the renderer-supplied
   // DOM element.
   container.appendChild(renderer.domElement);
@@ -279,6 +282,112 @@ const setupRenderTerrain2D = function(setup, chosenSet) {
   return setup;
 };
 
+const addPlane = function(setup, scene) {
+  const geo = new THREE.PlaneGeometry(config.mapWidthIn3DUnits, config.mapHeightIn3DUnits);
+  const material = new THREE.MeshStandardMaterial({ map: setup.terrainRenderTarget.texture });
+  const mesh = new THREE.Mesh(geo, material);
+  scene.add(mesh);
+  mesh.rotation.x = -Math.PI / 2.0;
+  mesh.rotation.z = -Math.PI / 2.0;
+  return setup;
+};
+
+const addCubes = function(setup, scene, heightScale, yScale) {
+  const hmul = heightScale;
+
+  const sz = 1.0;
+
+  const protoBox =
+    new THREE.BoxGeometry(
+        sz, sz, sz,
+        //XSEGMENTRES, 1.0, YSEGMENTRES);
+        1.0, 1.0, 1.0);
+
+  const geo = new THREE.Geometry();
+
+  const uvs = [];
+  for (let i = 0; i < protoBox.faceVertexUvs[0].length; i++) {
+    const uv = protoBox.faceVertexUvs[0][i];
+    uvs.push([{ x: uv[0].x, y: uv[0].y }, { x: uv[1].x, y: uv[1].y }, { x: uv[2].x, y: uv[2].y } ]);
+    // console.log(uv, uv[0].x, uv[0].y, uv[1].x, uv[1].y, uv[2].x, uv[2].y);
+  }
+
+  // scene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 10), new THREE.MeshLambertMaterial()));
+
+  const xMax = config.mapWidthInTiles;
+  const yMax = config.mapHeightInTiles;
+
+  const uvWidth = 1.0 / config.mapWidthInTiles;
+  const uvHeight = 1.0 / config.mapHeightInTiles;
+
+  const width = config.mapWidthIn3DUnits - 2;
+  const height = config.mapHeightIn3DUnits - 2;
+
+  const clipY = yScale;
+
+  for (let x = 0; x < xMax; x++) {
+    for (let y = 0; y < yMax; y++) {
+      const maxDepth = hmul * getTerrainHeight(x, y);
+      //for (let depth = -2 + maxDepth % yScale; depth < maxDepth + yScale; depth += yScale) {
+      for (let depth = maxDepth; depth + yScale >= -clipY; depth -= yScale) {
+        const mesh = new THREE.Mesh(protoBox, new THREE.MeshBasicMaterial());
+        const xpos = (x / (xMax - 1) - 0.5) * width;
+        const zpos = (y / (yMax - 1) - 0.5) * height;
+
+        const remaining = Math.min(yScale, maxDepth + yScale - depth);
+        //mesh.scale.y = yScale * remaining;
+        mesh.scale.y = yScale;
+
+        for (let i = 0; i < protoBox.faceVertexUvs[0].length; i++) {
+          const uvOrig = uvs[i];
+          const uv = protoBox.faceVertexUvs[0][i];
+
+          /*
+          const left = 0;
+          const right = 1;
+          const topFace = 2;
+          const bottomFace = 3;
+          const back = 4;
+          const front = 5;
+          // Scale vertical UVs so we get partial tiles instead of stretched tiles
+          const face = Math.floor(i * 0.5);
+          const scaleX = x =>
+            (face == left || face == right) ?
+              x / mesh.scale.y : x;
+          const scaleY = x =>
+            (face == back || face == front) ?
+              x / mesh.scale.y : x;
+          */
+
+          const flipX = x => (1.0 - x);
+          const flipY = x => (1.0 - x);
+          uv[0].x = (flipX(uvOrig[0].x) + x) * uvWidth;
+          uv[0].y = (flipY(uvOrig[0].y) + y) * uvHeight;
+          uv[1].x = (flipX(uvOrig[1].x) + x) * uvWidth;
+          uv[1].y = (flipY(uvOrig[1].y) + y) * uvHeight;
+          uv[2].x = (flipX(uvOrig[2].x) + x) * uvWidth;
+          uv[2].y = (flipY(uvOrig[2].y) + y) * uvHeight;
+        }
+        mesh.scale.x = width / (xMax - 1);
+        mesh.scale.z = height / (yMax - 1);
+        mesh.position.x = -xpos;
+        // Adjust such that the top of the box is at maxDepth
+        mesh.position.y = depth - yScale / 2.0;
+        mesh.position.z = zpos;
+        geo.mergeMesh(mesh);
+      }
+    }
+  }
+
+  const material = new THREE.MeshStandardMaterial({ map: setup.terrainRenderTarget.texture });
+  material.clippingPlanes = [new THREE.Plane(new THREE.Vector3(0, 1, 0), clipY)];
+  const plane = new THREE.Mesh(geo, material);
+  plane.rotation.y = Math.PI / 2.0;
+  scene.add(plane);
+
+  return setup;
+};
+
 const main = function(texture) {
   prelude();
 
@@ -291,18 +400,22 @@ const main = function(texture) {
 
   setup.renderer.setRenderTarget(setup.terrainRenderTarget);
   setup.renderer.render(setup.terrainQuadScene, setup.camera);
+  
+  //const setup.planeScene = new THREE.Scene();
+  //setup = addPlane(setup, setup.planeScene);
+  //setup = addPlane(setup, setup.scene);
 
-  const geo = new THREE.PlaneGeometry(config.mapWidthIn3DUnits, config.mapHeightIn3DUnits);
-  const material = new THREE.MeshStandardMaterial({ map: setup.terrainRenderTarget.texture });
-  const mesh = new THREE.Mesh(geo, material);
-  setup.scene.add(mesh);
-  mesh.rotation.x = -Math.PI / 2.0;
-  mesh.rotation.z = -Math.PI / 2.0;
+  //setup = addCubes(setup, setup.scene, 0, 0.0, 0.0);
+  
+  // Set yScale equal to xScale so that the cubes are cubes and not rectangular
+  // cuboids, i.e. all dimensions are equal, given that width (xScale) and
+  // height (zScale) are same.
+  setup = addCubes(setup, setup.scene, 5.0, config.mapWidthIn3DUnits / (config.mapWidthInTiles - 1));
+
   setup.scene.add(new THREE.AmbientLight(0xFFFFFFF));
-
   setup.camera.position.set(config.cameraPosition.x, config.cameraPosition.y, config.cameraPosition.z);
   const scene = setup.scene;
-  setup.camera.lookAt(new THREE.Vector3(scene.position.x, scene.position.y - 12, scene.position.z));
+  setup.camera.lookAt(new THREE.Vector3(scene.position.x, scene.position.y - 16, scene.position.z));
 
   function update() {
     setup.renderer.setRenderTarget(null);
