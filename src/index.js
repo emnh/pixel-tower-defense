@@ -966,35 +966,37 @@ const mainOld = function() {
 
 // TEST PART: COMMON FUNCTIONS
 
-const testPixelEqual = function(buffer, bx, by, tr, tg, tb, ta) {
-  const stride = (by * config.textureWidth + bx) * config.floatSize;
+const testPixelEqual = function(buffer, width, bx, by, tr, tg, tb, ta) {
+  const stride = (by * width + bx) * config.floatSize;
   const r = buffer[stride + 0];
   const g = buffer[stride + 1];
   const b = buffer[stride + 2];
   const a = buffer[stride + 3];
   const c = x => Math.floor(x * 255);
-  const result =
-    "Pixel equality test:" +
-    "x: " + bx +
-    ", y: " + by +
-    ", r: " + c(r) + " should be " + c(tr) +
-    ", g: " + c(g) + " should be " + c(tg) +
-    ", b: " + c(b) + " should be " + c(tb) +
-    ", a: " + c(a) + " should be " + c(ta);
   const threshold = 0;
   const success =
     Math.abs(r - tr) <= threshold &&
     Math.abs(g - tg) <= threshold &&
     Math.abs(b - tb) <= threshold &&
     Math.abs(a - ta) <= threshold;
+  const result =
+    success ?
+      '' :
+      ("Pixel equality test:" +
+       "x: " + bx +
+       ", y: " + by +
+       ", r: " + c(r) + " should be " + c(tr) +
+       ", g: " + c(g) + " should be " + c(tg) +
+       ", b: " + c(b) + " should be " + c(tb) +
+       ", a: " + c(a) + " should be " + c(ta));
   return {
     text: result,
     success: success
   };
 };
 
-const testPixelEqualBuffer = function(dataBuffer, pixelBuffer, bx, by) {
-  const stride = (by * config.textureWidth + bx) * config.floatSize;
+const testPixelEqualBuffer = function(dataBuffer, pixelBuffer, width, bx, by) {
+  const stride = (by * width + bx) * config.floatSize;
   const eps = 1.0e-6;
   const r = dataBuffer[stride + 0];
   const g = dataBuffer[stride + 1];
@@ -1006,8 +1008,27 @@ const testPixelEqualBuffer = function(dataBuffer, pixelBuffer, bx, by) {
       success: true
     };
   }
-  return testPixelEqual(pixelBuffer, bx, by, r, g, b, a);
+  return testPixelEqual(pixelBuffer, width, bx, by, r, g, b, a);
 };
+
+const compareBuffers = function(setup, expectedBuffer, renderBuffer, width, height) {
+  let testResult = { text: '', success: true };
+  for (let bx = 0; bx < width; bx++) {
+    for (let by = 0; by < height; by++) {
+      const newTestResult = testPixelEqualBuffer(expectedBuffer, renderBuffer, width, bx, by);
+      testResult = combineResults(testResult, newTestResult);
+      if (testResult.success) {
+        testResult.text = '';
+      } else {
+        break;
+      }
+    }
+  }
+  if (testResult.success) {
+    testResult.text = 'All ' + width + "x" + height + ' pixels passed: ';
+  }
+  return testResult;
+}
 
 const combineResults = function(a, b) {
   const oneEmpty = a.text === '' || b.text === '';
@@ -1017,20 +1038,34 @@ const combineResults = function(a, b) {
   };
 };
 
+// Note: Stateful function, due to storing table
 const reportResults = function(setup, testResult) {
   const dataURL = setup.canvas.toDataURL();
 
+  // Create table first time, store for later
+  const groupResultTable = 
+    setup.groupResultTable ||
+    document.createElement('table');
+  setup.groupResultTable = groupResultTable;
+
   const h1 = document.createElement('h1');
 
-  document.body.appendChild(h1);
+  groupResultTable
+    .appendChild(document.createElement('tr'))
+    .appendChild(document.createElement('td'))
+    .appendChild(h1);
 
-  h1.innerHTML = 'Texture Render Test';
+  h1.innerHTML = testResult.header;
 
-  const groupResult = document.createElement('div');
+  const groupResultRow = document.createElement('tr');
+  
+  const groupResult = document.createElement('td');
+  
+  //groupResult.style = "display: inline; position: relative; top: -" + config.logHeight * 0.5 + "px;";
 
-  groupResult.style = "display: inline; position: relative; top: -" + config.logHeight * 0.5 + "px;";
-
-  document.body.appendChild(groupResult);
+  document.body.appendChild(groupResultTable);
+  groupResultTable.appendChild(groupResultRow);
+  groupResultRow.appendChild(groupResult);
 
   const testResultElement = document.createElement('span');
 
@@ -1052,37 +1087,85 @@ const reportResults = function(setup, testResult) {
 
   const img = document.createElement('img');
 
-  document.body.appendChild(img);
+  groupResultRow.appendChild(document.createElement('td')).appendChild(img);
 
   img.src = dataURL;
   img.width = config.logWidth;
   img.height = config.logHeight;
+
+  return setup;
 };
 
 // TEST PART: ACTUAL TESTS
 
 const TestTileTexture = {
   test: function(setup) {
-    const bx = config.textureWidth * 0.5;
-    const by = config.textureHeight * 0.5;
-    const testResult1 = testPixelEqualBuffer(setup.tileTextureBuffer, setup.renderBuffer, bx, by);
-    const testResult2 = testPixelEqualBuffer(setup.tileTextureBuffer, setup.renderBuffer, config.textureWidth - 1, config.textureHeight - 1);
-    let testResult = combineResults(testResult1, testResult2);
-    for (let bx = 0; bx < config.textureWidth; bx++) {
-      for (let by = 0; by < config.textureHeight; by++) {
-        const newTestResult = testPixelEqualBuffer(setup.tileTextureBuffer, setup.renderBuffer, bx, by);
-        testResult = combineResults(testResult, newTestResult);
-        if (testResult.success) {
-          testResult.text = '';
-        } else {
-          break;
-        }
-      }
-    }
-    if (testResult.success) {
-      //testResult.text = 'All ' + config.textureWidth + "x" + config.textureHeight + ' pixels passed: ';
-    }
-    return testResult;
+    // Render all tiles, i.e. simply re-render input texture
+    render(setup, setup.quadScene, config.textureWidth, config.textureHeight);
+    const testResult = 
+      {
+        text: 'No test ',
+        success: true,
+        header: 'Render Input Tile Texture'
+      };
+    reportResults(setup, testResult);
+
+    const renderBufferContainingAllTiles = Float32Array.from(setup.renderBuffer);
+
+    // Now render the test tile
+    setup = setupRenderTarget(setup, config.tileWidth, config.tileHeight);
+    setup.quadMaterial.uniforms.texture.value = setup.testTileTexture;
+    setup.quadMaterial.uniforms.resolution.value = new THREE.Vector2(config.tileWidth, config.tileHeight);
+    render(setup, setup.quadScene, config.tileWidth, config.tileHeight);
+
+    // Load the rendered test tile into buffer for pixel equality comparison.
+    // Rendering the test tile avoids pixel comparison issues with PNG sRGB <->
+    // linear colorspace conversion, gamma <-> linear conversion and other stuff
+    // that Chrome, WebGL and Three.js does behind our backs. Vaguely.
+    setup =
+      reloadBufferTileToTexture(
+        setup,
+        setup.tileTextureBuffer,
+        setup.cobalt_stone_11_xtile * config.tileWidth,
+        setup.cobalt_stone_11_ytile * config.tileHeight,
+        config.textureWidth,
+        config.textureHeight,
+        setup.renderBuffer,
+        0,
+        0,
+        config.tileWidth,
+        config.tileHeight,
+        1);
+
+    // Restore the first renderBuffer
+    setup.renderBuffer = renderBufferContainingAllTiles;
+    const testResult2 = compareBuffers(setup, setup.tileTextureBuffer, setup.renderBuffer, config.textureWidth, config.textureHeight);
+    testResult2.header = 'Compare Test Tile to position in rendered Tile Sheet';
+    reportResults(setup, testResult2);
+
+    // Now render the test tile from the output of the first render
+    setup = setupTestTileTexture(setup);
+    setup =
+      reloadBufferTileToTexture(
+        setup,
+        setup.testTileTextureBuffer,
+        0,
+        0,
+        config.tileWidth,
+        config.tileHeight,
+        renderBufferContainingAllTiles,
+        setup.cobalt_stone_11_xtile * config.tileWidth,
+        setup.cobalt_stone_11_ytile * config.tileHeight,
+        config.textureWidth,
+        config.textureHeight,
+        1);
+
+    //setup = setupRenderTarget(setup, config.tileWidth, config.tileHeight);
+    setup.quadMaterial.uniforms.texture.value = setup.testTileTextureFromBuffer;
+    render(setup, setup.quadScene, config.tileWidth, config.tileHeight);
+    const testResult3 = compareBuffers(setup, setup.testTileTextureBuffer, setup.renderBuffer, config.tileWidth, config.tileHeight);
+    testResult3.header = 'Render Test Tile Offset from rendered Tile Sheet';
+    reportResults(setup, testResult3);
   }
 };
 
@@ -1138,7 +1221,7 @@ const setupTileTexture = function(setup, width, height, texture) {
 
 const setupTestTileTexture = function(setup) {
   setup.testTileTextureBuffer = new Float32Array(config.floatSize * config.tileWidth * config.tileHeight);
-  setup.testTileTexture = new THREE.DataTexture(setup.testTileTextureBuffer, config.tileWidth, config.tileHeight, THREE.RGBAFormat, THREE.FloatType);
+  setup.testTileTextureFromBuffer = new THREE.DataTexture(setup.testTileTextureBuffer, config.tileWidth, config.tileHeight, THREE.RGBAFormat, THREE.FloatType);
   setDefaultTextureProperties(setup.testTileTexture);
   return setup;
 };
@@ -1244,108 +1327,21 @@ const reloadBufferTileToTexture =
 const test = function(texture, testTileTexture) {
   prelude();
 
+  // Setup renderer, set tile texture
   let setup = setupRenderer(config.textureWidth, config.textureHeight, { preserveDrawingBuffer: true });
   setup = setupTileTexture(setup, config.textureWidth, config.textureHeight, texture);
 
-  const cobalt_stone_11_xtile = 41;
-  const cobalt_stone_11_ytile = 14;
-  setup =
-    loadTileToTexture(
-      setup,
-      setup.tileTextureBuffer,
-      tiles.cobalt_stone_11,
-      cobalt_stone_11_xtile * config.tileWidth,
-      cobalt_stone_11_ytile * config.tileHeight,
-      config.textureWidth,
-      config.textureHeight,
-      255);
+  // Set test tile index
+  setup.cobalt_stone_11_xtile = 41;
+  setup.cobalt_stone_11_ytile = 14;
 
-  setup = setupTestTileTexture(setup);
   // Set test tile
-  // TODO: make function to set default texture properties
   setup.testTileTexture = setDefaultTextureProperties(testTileTexture);
-  /*
-  setup =
-    loadTileToTexture(
-      setup,
-      setup.testTileTextureBuffer,
-      tiles.cobalt_stone_11,
-      0,
-      0,
-      config.tileWidth,
-      config.tileHeight,
-      255);
-      */
-
   setup = setupTestQuad(setup, config.textureWidth, config.textureHeight);
   setup = setupRenderTarget(setup, config.textureWidth, config.textureHeight);
 
-  render(setup, setup.quadScene, config.textureWidth, config.textureHeight);
-  const testResult = { text: 'No test ', success: true };
-  // TestTileTexture.test(setup);
-  reportResults(setup, testResult);
-
-  const renderBufferCopy = Float32Array.from(setup.renderBuffer);
-  //console.log(setup.testTileTextureBuffer);
-
-  // Now render the test tile
-  setup = setupRenderTarget(setup, config.tileWidth, config.tileHeight);
-  setup.quadMaterial.uniforms.texture.value = setup.testTileTexture;
-  setup.quadMaterial.uniforms.resolution.value = new THREE.Vector2(config.tileWidth, config.tileHeight);
-  // render(setup, setup.quadScene, config.textureWidth, config.textureHeight);
-  render(setup, setup.quadScene, config.tileWidth, config.tileHeight);
-
-  // Load the rendered test tile into buffer for pixel equality comparison.
-  // Rendering the test tile avoids pixel comparison issues with PNG sRGB <->
-  // linear colorspace conversion, gamma <-> linear conversion and other stuff
-  // that Chrome, WebGL and Three.js does behind our backs. Vaguely.
-  setup =
-    reloadBufferTileToTexture(
-      setup,
-      setup.tileTextureBuffer,
-      cobalt_stone_11_xtile * config.tileWidth,
-      cobalt_stone_11_ytile * config.tileHeight,
-      config.textureWidth,
-      config.textureHeight,
-      setup.renderBuffer,
-      0,
-      0,
-      config.tileWidth,
-      config.tileHeight,
-      1);
-
-  // Restore the first renderBuffer
-  setup.renderBuffer = renderBufferCopy;
-  const testResult2 = TestTileTexture.test(setup);
-  reportResults(setup, testResult2);
-
-
-  // Now render the test tile from the output of the first render
-  setup = setupTestTileTexture(setup);
-  setup =
-    reloadBufferTileToTexture(
-      setup,
-      setup.testTileTextureBuffer,
-      0,
-      0,
-      config.tileWidth,
-      config.tileHeight,
-      renderBufferCopy,
-      cobalt_stone_11_xtile * config.tileWidth,
-      cobalt_stone_11_ytile * config.tileHeight,
-      config.textureWidth,
-      config.textureHeight,
-      1);
-
-  const c = x => Math.floor(x * 255);
-  //console.log(setup.testTileTextureBuffer.map(x => c(x)));
-  //console.log(setup.testTileTextureBuffer);
-
-  setup.quadMaterial.uniforms.texture.value = setup.testTileTexture;
-  render(setup, setup.quadScene, config.tileWidth, config.tileHeight);
-  const testResult3 = { text: 'No test ', success: true };
-  reportResults(setup, testResult3);
-
+  // Actual tests
+  TestTileTexture.test(setup);
 };
 
 try {
