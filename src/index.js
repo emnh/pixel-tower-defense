@@ -48,6 +48,14 @@ const fatal = function(msg) {
   document.body.innerHTML = '<h1>' + msg + '</h1>';
 }
 
+const setDefaultTextureProperties = function(texture) {
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.anisotropy = 0;
+  texture.flipY = false;
+  return texture;
+};
+
 const setupRenderer = function(width, height, renderOpts) {
   // Set some camera attributes.
   const VIEW_ANGLE = 45;
@@ -259,8 +267,7 @@ const renderTerrain2D = function(setup) {
 
   const ti =
     new THREE.DataTexture(setup.tileIndexTextureData, config.mapWidthInTiles, config.mapHeightInTiles, THREE.RBGAFormat, THREE.FloatType);
-  ti.minFilter = THREE.NearestFilter;
-  ti.magFilter = THREE.NearestFilter;
+  setDefaultTextureProperties(ti);
   setup.terrainQuadMaterial.uniforms.tileIndexTexture = { value: ti };
   setup.terrainQuadMaterial.uniforms.tileSizeRelativeToTexture =
     { value: new THREE.Vector2(config.tileWidth / config.textureWidth, config.tileHeight / config.textureHeight ) };
@@ -278,11 +285,7 @@ const main = function(texture) {
   document.body.style = 'margin: 0px; padding: 0px; overflow: hidden;';
 
   let setup = setupRenderer(window.innerWidth, window.innerHeight, {});
-  texture.minFilter = THREE.NearestFilter;
-  texture.magFilter = THREE.NearestFilter;
-  texture.anisotropy = 0;
-  texture.flipY = false;
-  setup.tileTexture = texture;
+  setup.tileTexture = setDefaultTextureProperties(texture);
   setup = renderTerrain2D(setup);
   setup = setupScreenCopyQuad(setup, setup.terrainRenderTarget.texture);
 
@@ -439,29 +442,16 @@ const mainOld = function() {
     dataUnits[stride + 1] = (60 + Math.floor(Math.random() * 10)) * yf;
   }
 
-  // used the buffer to create a DataTexture
+  // use the buffer to create a DataTexture
   const dataTexture = new THREE.DataTexture(data, XSEGMENTS, YSEGMENTS, THREE.RGBAFormat, THREE.FloatType);
-  dataTexture.minFilter = THREE.NearestFilter;
-  dataTexture.magFilter = THREE.NearestFilter;
+  setDefaultTextureProperties(dataTexture);
   const dataTextureUnits = new THREE.DataTexture(dataUnits, XUNITS, YUNITS, THREE.RGBAFormat, THREE.FloatType);
-  dataTextureUnits.minFilter = THREE.NearestFilter;
-  dataTextureUnits.magFilter = THREE.NearestFilter;
+  setDefaultTextureProperties(dataTextureUnits);
   //dataTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
   const texture = new THREE.TextureLoader().load('art/images/ProjectUtumno_full_4096.png' );
 
-  /*
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.offset.x = xc;
-  texture.offset.y = yc;
-  texture.repeat.x = tileSize / textureWidth;
-  texture.repeat.y = tileSize / textureHeight;
-  texture.minFilter = THREE.LinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  */
-  texture.minFilter = THREE.NearestFilter;
-  texture.magFilter = THREE.NearestFilter;
+  setDefaultTextureProperties(texture);
   texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
   // create the plane's material
@@ -982,7 +972,6 @@ const testPixelEqual = function(buffer, bx, by, tr, tg, tb, ta) {
   const g = buffer[stride + 1];
   const b = buffer[stride + 2];
   const a = buffer[stride + 3];
-  //const color = new THREE.Color(r, g, b, a).convertLinearTo;
   const c = x => Math.floor(x * 255);
   const result =
     "Pixel equality test:" +
@@ -992,7 +981,7 @@ const testPixelEqual = function(buffer, bx, by, tr, tg, tb, ta) {
     ", g: " + c(g) + " should be " + c(tg) +
     ", b: " + c(b) + " should be " + c(tb) +
     ", a: " + c(a) + " should be " + c(ta);
-  const threshold = 1 / 255;
+  const threshold = 0;
   const success =
     Math.abs(r - tr) <= threshold &&
     Math.abs(g - tg) <= threshold &&
@@ -1142,10 +1131,7 @@ const setupTileTexture = function(setup, width, height, texture) {
   setup.tileTextureSize = dataTextureSize;
   setup.tileTextureBuffer = dataTextureBuffer;
   setup.tileTexture = texture;
-  texture.minFilter = THREE.NearestFilter;
-  texture.magFilter = THREE.NearestFilter;
-  texture.anisotropy = 0;
-  texture.flipY = false;
+  setDefaultTextureProperties(texture);
 
   return setup;
 };
@@ -1153,10 +1139,7 @@ const setupTileTexture = function(setup, width, height, texture) {
 const setupTestTileTexture = function(setup) {
   setup.testTileTextureBuffer = new Float32Array(config.floatSize * config.tileWidth * config.tileHeight);
   setup.testTileTexture = new THREE.DataTexture(setup.testTileTextureBuffer, config.tileWidth, config.tileHeight, THREE.RGBAFormat, THREE.FloatType);
-  setup.testTileTexture.minFilter = THREE.NearestFilter;
-  setup.testTileTexture.magFilter = THREE.NearestFilter;
-  setup.testTileTexture.anisotropy = 0;
-  setup.testTileTexture.flipY = false;
+  setDefaultTextureProperties(setup.testTileTexture);
   return setup;
 };
 
@@ -1190,8 +1173,7 @@ const setupRenderTarget = function(setup, width, height) {
 			stencilBuffer: false,
 			depthBuffer: false
 		});
-  setup.renderTarget.texture.minFilter = THREE.NearestFilter;
-  setup.renderTarget.texture.magFilter = THREE.NearestFilter;
+  setDefaultTextureProperties(setup.renderTarget.texture);
   setup.renderBuffer = new Float32Array(config.floatSize * width * height);
   return setup;
 };
@@ -1281,11 +1263,7 @@ const test = function(texture, testTileTexture) {
   setup = setupTestTileTexture(setup);
   // Set test tile
   // TODO: make function to set default texture properties
-  setup.testTileTexture = testTileTexture;
-  setup.testTileTexture.minFilter = THREE.NearestFilter;
-  setup.testTileTexture.magFilter = THREE.NearestFilter;
-  setup.testTileTexture.anisotropy = 0;
-  setup.testTileTexture.flipY = false;
+  setup.testTileTexture = setDefaultTextureProperties(testTileTexture);
   /*
   setup =
     loadTileToTexture(
@@ -1365,18 +1343,9 @@ const test = function(texture, testTileTexture) {
 
   setup.quadMaterial.uniforms.texture.value = setup.testTileTexture;
   render(setup, setup.quadScene, config.tileWidth, config.tileHeight);
-  //const testResult3 = TestTileTexture.test(setup);
   const testResult3 = { text: 'No test ', success: true };
   reportResults(setup, testResult3);
 
-  /*
-  const testBox = new THREE.BoxGeometry(2.0, 2.0);
-  const testMesh = new THREE.Mesh(testBox, new THREE.MeshBasicMaterial(0xFFFFFF));
-  setup.scene.add(testMesh);
-  setup.scene.add(new THREE.AmbientLight(0xFFFFFF));
-  setup.camera.position.z = 0;
-  setup.camera.lookAt(testMesh.position);
-  */
 };
 
 try {
