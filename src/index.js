@@ -551,30 +551,27 @@ void main() {
     displacement = vec4(0.0);
     displacement.w = 0.5;
   }
-  if (abs(displacement.x) <= 1.0e-6 || abs(displacement.z) <= 1.0e-6) {
-    float fac = 32.0;
+  float minWave = 0.1;
+  //if (abs(displacement.x) <= minWave || abs(displacement.z) <= minWave) {
+  if (waterFrameCount < 100.0) {
+    float fac = 20.0;
     vec2 uv2 = floor(uv * fac) / fac;
     vec2 uv3 = fract(uv * fac);
-    float speed = rand(uv2) + rand(uv) - 1.0;
-    speed = rand(uv2) >= 0.5 ? 1.0 : -1.0;
-    speed *= 0.5 * distance(uv, uv2);
-    if (abs(displacement.x) <= 1.0e-6) {
-      displacement.x += 1.0 * speed;
-    }
-    if (abs(displacement.z) <= 1.0e-6) {
-      displacement.z += 1.0 * speed;
-    }
+    fac = rand(floor(uv * 10.0));
+    float speed = 0.05 * sin(10.0 * time) * (sin(6.28 * fac * uv.x) + sin(6.28 * fac * uv.y));
+    displacement.w += 1.0 * speed;
+  }
+  if (mod(waterFrameCount, 2.0) == 0.0) {
+    displacement.x += 0.1 * avgX;
   } else {
-    float lim = 5.0;
-    if (mod(waterFrameCount, 2.0) == 0.0) {
-      displacement.x += 0.1 * avgX;
-    } else {
-      displacement.z += 0.1 * avgY;
-    }
+    displacement.z += 0.1 * avgY;
   }
   displacement.w = mix(displacement.w, displacement.w + displacement.x + displacement.z, 0.25);
+  float lim = 2.0;
+  displacement.w = clamp(displacement.w, -lim, lim);
   
-  displacement.y = displacement.w;
+  //displacement.y = (displacement.w + lim) * 0.5;
+  displacement.y = abs(displacement.w);
 
   gl_FragColor = vec4(displacement);
 }
@@ -589,10 +586,10 @@ void main() {
   setup.updaters.push(function(frameCount) {
     const material = setup.waterQuadMaterial;
     material.uniforms.accumTime.value += material.uniforms.deltaTime.value;
-    const fixedTime = 0.4; // milliseconds
+    let fixedTime = 0.4; // milliseconds
     let count = 0;
     //console.log(material.uniforms.accumTime.value);
-    while (material.uniforms.accumTime.value >= fixedTime) {
+    while (waterFrameCount < 10000 || material.uniforms.accumTime.value >= fixedTime) {
       const rts = setup.waterRenderTargets;
       const wrt = rts[waterFrameCount % 2];
       const wrt2 = rts[(waterFrameCount + 1) % 2];
@@ -600,6 +597,7 @@ void main() {
       //setup.renderer.setSize(wrt.width, wrt.height);
       
       material.uniforms.accumTime.value -= fixedTime;
+      material.uniforms.accumTime.value = Math.max(0.0, material.uniforms.accumTime.value);
       material.uniforms.waterFrameCount = { value: waterFrameCount };
       setup.renderer.setRenderTarget(wrt);
       setup.renderer.render(setup.waterQuadScene, setup.camera);
