@@ -480,10 +480,22 @@ const setupWater = function(setup) {
 			stencilBuffer: false,
 			depthBuffer: false
 		});
+  setup.waterNormalsRenderTarget =
+    new THREE.WebGLRenderTarget(width, height, {
+			wrapS: THREE.RepeatWrapping,
+			wrapT: THREE.RepeatWrapping,
+			minFilter: THREE.NearestFilter,
+			magFilter: THREE.NearestFilter,
+			format: THREE.RGBAFormat,
+			type: ( /(iPad|iPhone|iPod)/g.test( navigator.userAgent ) ) ? THREE.HalfFloatType : THREE.FloatType,
+			stencilBuffer: false,
+			depthBuffer: false
+		});
   //setup.waterRenderTarget1 = new THREE.WebGLRenderTarget(width, height);
   //setup.waterRenderTarget2 = new THREE.WebGLRenderTarget(width, height);
   setDefaultTextureProperties(setup.waterRenderTarget1.texture);
   setDefaultTextureProperties(setup.waterRenderTarget2.texture);
+  setDefaultTextureProperties(setup.waterNormalsRenderTarget.texture);
   setup.waterRenderTargets = [setup.waterRenderTarget1, setup.waterRenderTarget2];
 
   const vertexShader = config.quadVertexShader;
@@ -495,9 +507,11 @@ uniform vec2 pixelSizeRelativeToTexture;
 uniform vec2 mapSizeInTiles;
 uniform sampler2D texture;
 uniform sampler2D tileIndexTexture;
+uniform sampler2D terrainTexture;
 uniform float waterFrameCount;
 uniform float time;
 uniform float deltaTime;
+uniform float isNormals;
 
 float rand(vec2 co){
   return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
@@ -571,9 +585,36 @@ void main() {
   displacement.w = clamp(displacement.w, -lim, lim);
   
   //displacement.y = (displacement.w + lim) * 0.5;
-  displacement.y = abs(displacement.w);
+  displacement.y = displacement.w;
 
-  gl_FragColor = vec4(displacement);
+  float mapWidth = 64.0;
+  float mapHeight = mapWidth;
+
+  vec2 dx = vec2(1.0, 0.0) / resolution.xy;
+  vec2 dy = vec2(0.0, 1.0) / resolution.xy;
+  float h1 = texture2D(texture, uv + dx).y;
+  float h2 = texture2D(texture, uv + dy).y;
+  float hmfac = 0.5;
+  vec3 v1 = vec3(dx.x * mapWidth, (h1 - displacement.y) * hmfac , dx.y * mapHeight);
+  vec3 v2 = vec3(dy.x * mapWidth, (h2 - displacement.y) * hmfac, dy.y * mapHeight);
+  vec3 normal = normalize(cross(v1, v2));
+  
+  if (isNormals > 1.5) {
+    vec3 light = normalize(vec3(-1.0, 1.0, -1.0));
+    // TODO: scale pos
+    float C = 50.0;
+    vec3 cameraPos = vec3(-C, C, -C);
+    vec3 pos = vec3((uv.x - 0.5) * mapWidth, displacement.y, (uv.y - 0.5) * mapHeight);
+    vec3 incomingRay = -normalize(pos * vec3(1.0, 1.0, 1.0) - cameraPos);
+    vec3 refractionDir = refract(incomingRay, normal, 1.0 / 1.333);
+    vec2 nuv = (pos - refractionDir * (pos.y / refractionDir.y)).xz / vec2(mapWidth, mapHeight) + vec2(0.5);
+    vec3 color = texture2D(terrainTexture, nuv).rgb;
+    gl_FragColor = vec4(color, 1.0);
+  } else if (isNormals > 0.5) {
+    gl_FragColor = vec4(normal, 1.0);
+  } else {
+    gl_FragColor = vec4(displacement);
+  }
 }
 `;
 
@@ -583,13 +624,16 @@ void main() {
   setup.waterQuadMaterial.uniforms.tileIndexTexture = { value: setup.tileIndexTexture };
   setup.waterQuadMaterial.uniforms.mapSizeInTiles = { value: new THREE.Vector2(config.mapWidthInTiles, config.mapHeightInTiles) };
   let waterFrameCount = 0;
+  const material = setup.waterQuadMaterial;
+  material.uniforms.terrainTexture = { value: setup.terrainRenderTarget.texture };
   setup.updaters.push(function(frameCount) {
-    const material = setup.waterQuadMaterial;
     material.uniforms.accumTime.value += material.uniforms.deltaTime.value;
     let fixedTime = 0.4; // milliseconds
     let count = 0;
     //console.log(material.uniforms.accumTime.value);
-    while (waterFrameCount < 10000 || material.uniforms.accumTime.value >= fixedTime) {
+    material.uniforms.isNormals = { value: 0.0 };
+    //while (waterFrameCount < 10000 || material.uniforms.accumTime.value >= fixedTime) {
+    while (waterFrameCount < 0 || material.uniforms.accumTime.value >= fixedTime) {
       const rts = setup.waterRenderTargets;
       const wrt = rts[waterFrameCount % 2];
       const wrt2 = rts[(waterFrameCount + 1) % 2];
@@ -604,12 +648,19 @@ void main() {
       waterFrameCount++;
       count++;
     }
-    //console.log(count);
+    material.uniforms.isNormals = { value: 1.0 };
+    setup.renderer.setRenderTarget(setup.waterNormalsRenderTarget);
+    setup.renderer.render(setup.waterQuadScene, setup.camera);
+
+    material.uniforms.isNormals = { value: 2.0 };
+    setup.renderer.setRenderTarget(setup.waterNormalsRenderTarget);
+    setup.renderer.render(setup.waterQuadScene, setup.camera);
 
     // TODO: maybe relocate this line
     const rts = setup.waterRenderTargets;
     const wrt = rts[waterFrameCount % 2];
     setup.terrainMeshWater.material.displacementMap = wrt.texture;
+    setup.terrainMeshWater.material.map = setup.waterNormalsRenderTarget.texture;
   });
 
   return setup;
