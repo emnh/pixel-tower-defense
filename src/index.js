@@ -607,26 +607,42 @@ float getwaves(vec2 position){
     return w / ws;
 }
 
-void main() {
-  vec2 uv = gl_FragCoord.xy / resolution.xy;
-  
+float getGroundHeight(vec2 uv) {
   vec2 tileIndexUV = floor(uv * mapSizeInTiles) / mapSizeInTiles;
   vec4 tileIndex = texture2D(tileIndexTexture, tileIndexUV);
   float groundHeight = tileIndex.z;
-  if (!isWater(groundHeight)) {
-    //return;
+  return groundHeight;
+}
+
+float checkDelta(float delta, float waterMine, float waterNB) {
+  if (delta > 0.0) {
+    delta = min(delta, max(0.0, waterMine));
+  } else {
+    delta = max(delta, max(0.0, waterNB));
   }
+  return delta;
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / resolution.xy;
+  
+  float groundHeight = getGroundHeight(uv);
 
   vec4 displacement = texture2D(texture, uv);
   vec4 velocity = texture2D(velocityTexture, uv);
 
+  vec4 nbg = vec4(0.0);
+  nbg.x = getGroundHeight(uv + vec2(-1.0, 0.0) / resolution.xy);
+  nbg.y = getGroundHeight(uv + vec2(1.0, 0.0) / resolution.xy);
+  nbg.z = getGroundHeight(uv + vec2(0.0, -1.0) / resolution.xy);
+  nbg.w = getGroundHeight(uv + vec2(0.0, 1.0) / resolution.xy);
   vec4 nbs = vec4(0.0);
   nbs.x = vsum(texture2D(texture, uv + vec2(-1.0, 0.0) / resolution.xy));
   nbs.y = vsum(texture2D(texture, uv + vec2(1.0, 0.0) / resolution.xy));
   nbs.z = vsum(texture2D(texture, uv + vec2(0.0, -1.0) / resolution.xy));
   nbs.w = vsum(texture2D(texture, uv + vec2(0.0, 1.0) / resolution.xy));
 
-  float mine = vsum(displacement);
+  float mine = groundHeight + vsum(displacement);
   float avg = 0.25 * ((nbs.x - mine) + (nbs.y - mine) + (nbs.z - mine) + (nbs.w - mine));
 
   vec4 nbsV = vec4(0.0);
@@ -733,7 +749,25 @@ void main() {
     //transfer = vec4(velocity.x, velocity.x, velocity.z, velocity.z) + 0.25 * 0.5 * (nbs - vec4(mine));
     //transfer = velocity + nbsV + 0.25 * 0.5 * (nbs - vec4(mine));
     //transfer = velocity - nbsV + 0.25 * 0.5 * (nbs - vec4(mine)) + 0.1 * avg;
-    transfer = velocity - nbsV + 0.25 * 0.5 * (nbs - vec4(mine)) + 0.0 * 0.25 * 0.5 * avg;
+    
+    // That's the height difference (ground + water, neighbour ground + water)
+    vec4 delta = (nbg + nbs) - vec4(mine);
+    // Now make sure the difference is not greater than available water
+    
+    checkDelta(delta.x, mine - groundHeight, nbs.x);
+    checkDelta(delta.y, mine - groundHeight, nbs.y);
+    checkDelta(delta.z, mine - groundHeight, nbs.z);
+    checkDelta(delta.w, mine - groundHeight, nbs.w);
+    /*
+    if (delta > 0.0) {
+      delta = min(delta, mine - groundHeight);
+    } else {
+      delta = min(delta, nbs);
+    }
+    */
+
+    //transfer = velocity - nbsV + 0.25 * 0.5 * (nbs - vec4(mine)) + 0.0 * 0.25 * 0.5 * avg;
+    transfer = velocity - nbsV + 0.25 * 0.5 * delta + 0.0 * 0.25 * 0.5 * avg;
     //transfer = max(vec4(0.0), transfer);
     transfer = min(vec4(0.0), transfer);
     float l2 = vsum(abs(transfer) * mine) * 4.0 / 0.25;
@@ -785,6 +819,14 @@ void main() {
     //velocity.zw = fv2 * (diff.w - diff.z);
     //velocity += 0.1 * (transfer - prevTransfer);
     velocity = 0.5 * (transfer - prevTransfer);
+    /*
+    if (!isWater(groundHeight)) {
+      velocity = vec4(0.0);
+    }
+    if (vsum(displacement) < groundHeight) {
+      //velocity = -vec4(0.5);
+    }
+    */
     //velocity.xy = mix(velocity.xy, velocity.yx, 0.1);
     //velocity.zw = mix(velocity.zw, velocity.wz, 0.1);
     //velocity *= 0.95;
