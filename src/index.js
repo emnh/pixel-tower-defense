@@ -30,7 +30,8 @@ const config = {
   waterWidthInPixels: 1024,
   waterHeightInPixels: 1024,
   mapDetailX: 32,
-  mapDetailY: 32
+  mapDetailY: 32,
+  mapHeight: 5
 };
 // Terrain has width, height and depth.
 // Depth is the Y axis, i.e. up and down.
@@ -106,7 +107,9 @@ const setupRenderer = function(width, height, renderOpts) {
   if (abs(transformed.y) <= 1.0e-6) {
     vec4 dtex = texture2D(displacementMap, dmuv);
     //float disp = abs(dtex.x + dtex.y + dtex.z + dtex.w) * displacementScale;
-    float disp = 0.25 * (dtex.x + dtex.y + dtex.z + dtex.w) * displacementScale;
+    //float disp = 0.25 * (dtex.x + dtex.y + dtex.z + dtex.w) * displacementScale;
+    //float disp = (dtex.x + dtex.y) * displacementScale;
+    float disp = dtex.y * displacementScale;
     transformed.y += disp;
   }
 #endif
@@ -306,6 +309,8 @@ const setupRenderTerrain2D = function(setup, chosenSet) {
   const ti =
     new THREE.DataTexture(setup.tileIndexTextureData, config.mapWidthInTiles, config.mapHeightInTiles, THREE.RBGAFormat, THREE.FloatType);
   setDefaultTextureProperties(ti);
+	//ti.wrapS = THREE.RepeatWrapping;
+	//ti.wrapT = THREE.RepeatWrapping;
   setup.tileIndexTexture = ti;
   setup.terrainQuadMaterial.uniforms.tileIndexTexture = { value: ti };
   setup.terrainQuadMaterial.uniforms.tileSizeRelativeToTexture =
@@ -554,6 +559,7 @@ uniform float waterFrameCount;
 uniform float time;
 uniform float deltaTime;
 uniform float waterShaderMode;
+uniform float mapHeight;
 
 float rand(vec2 co){
   return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
@@ -561,7 +567,7 @@ float rand(vec2 co){
 
 bool isWater(float height) {
   // TODO: uniform
-  bool isWater = height <= 0.1;
+  bool isWater = height <= 0.1 * mapHeight;
   return isWater;
 }
 
@@ -572,8 +578,14 @@ float normHeight(float water, float groundHeight) {
   //return water;
 }
 
+float getDisplacement(vec4 a) {
+  return max(0.0, a.x);
+}
+
 float vsum(vec4 a) {
-  return (a.x + a.y + a.z + a.w) * 0.25;
+  // TODO: no * 0.25
+  //return (a.x + a.y + a.z + a.w) * 0.25;
+  return (a.x + a.y + a.z + a.w);
   //return a.x;
 }
 
@@ -608,19 +620,30 @@ float getwaves(vec2 position){
 }
 
 float getGroundHeight(vec2 uv) {
+  // Outside map let height be:
+  if (abs(uv.x - 0.5) > 0.5 - 1.0e-2) {
+    return 0.0;
+  }
+  if (abs(uv.y - 0.5) > 0.5 - 1.0e-2) {
+    return 0.0;
+  }
   vec2 tileIndexUV = floor(uv * mapSizeInTiles) / mapSizeInTiles;
   vec4 tileIndex = texture2D(tileIndexTexture, tileIndexUV);
   float groundHeight = tileIndex.z;
-  return groundHeight;
+  return mapHeight * groundHeight;
 }
 
 float checkDelta(float delta, float waterMine, float waterNB) {
   if (delta > 0.0) {
     delta = min(delta, max(0.0, waterMine));
   } else {
-    delta = max(delta, max(0.0, waterNB));
+    delta = max(delta, -max(0.0, waterNB));
   }
   return delta;
+}
+
+float posWater(float x) {
+  return max(0.0, x);
 }
 
 void main() {
@@ -637,12 +660,12 @@ void main() {
   nbg.z = getGroundHeight(uv + vec2(0.0, -1.0) / resolution.xy);
   nbg.w = getGroundHeight(uv + vec2(0.0, 1.0) / resolution.xy);
   vec4 nbs = vec4(0.0);
-  nbs.x = vsum(texture2D(texture, uv + vec2(-1.0, 0.0) / resolution.xy));
-  nbs.y = vsum(texture2D(texture, uv + vec2(1.0, 0.0) / resolution.xy));
-  nbs.z = vsum(texture2D(texture, uv + vec2(0.0, -1.0) / resolution.xy));
-  nbs.w = vsum(texture2D(texture, uv + vec2(0.0, 1.0) / resolution.xy));
+  nbs.x = getDisplacement(texture2D(texture, uv + vec2(-1.0, 0.0) / resolution.xy));
+  nbs.y = getDisplacement(texture2D(texture, uv + vec2(1.0, 0.0) / resolution.xy));
+  nbs.z = getDisplacement(texture2D(texture, uv + vec2(0.0, -1.0) / resolution.xy));
+  nbs.w = getDisplacement(texture2D(texture, uv + vec2(0.0, 1.0) / resolution.xy));
 
-  float mine = groundHeight + vsum(displacement);
+  float mine = groundHeight + getDisplacement(displacement);
   float avg = 0.25 * ((nbs.x - mine) + (nbs.y - mine) + (nbs.z - mine) + (nbs.w - mine));
 
   vec4 nbsV = vec4(0.0);
@@ -664,7 +687,10 @@ void main() {
     }
     //displacement.x = 0.5 * s;
     //displacement.y = 0.005 * s;
-    displacement = vec4(getwaves(uv * 8.0) * 5.0);
+    if (isWater(groundHeight)) {
+      displacement.x = (getwaves(uv * 8.0) * 5.0) - 1.5 - groundHeight;
+      displacement.x = max(0.0, displacement.x);
+    }
     velocity = vec4(0.0);
   }
   //displacement.x += 0.9 * displacement.x + getwaves(uv * 10.0) * 4.0;
@@ -679,114 +705,55 @@ void main() {
   // Y: dx = +1
   // Z: dy = -1
   // W: dy = +1
-  // float delta = displacement.w - oldValue;
   
   //vec4 transfer = 0.1 * vec4(avg.xy * displacement.x, avg.zw * displacement.z);
   
   vec4 transfer = vec4(0.0);
   if (waterShaderMode > 2.5 && waterShaderMode < 3.5) {
-    float w = vsum(displacement);
-    // Transfer max half
-    w *= 1.0;
-    //vec4 transferPerNeighbour = (vec4(max(0.0, w - nbs.x), max(0.0, w - nbs.y), max(0.0, w - nbs.z), max(0.0, w - nbs.w)));
-    vec4 transferPerNeighbour = (vec4(max(0.0, w - nbs.x), max(0.0, w - nbs.y), max(0.0, w - nbs.z), max(0.0, w - nbs.w)));
-    //transferPerNeighbour = vec4(w) * 0.25;
-    //transferPerNeighbour = vec4(w) * 0.25;
-    float l = vsum(abs(transferPerNeighbour));
-    if (l > 0.0) {
-      transferPerNeighbour /= l;
-    }
-    transfer = 0.5 * (transferPerNeighbour + nbsV + velocity);
-    //transfer = 0.5 * (transferPerNeighbour + 0.0 * velocity);
-    //transfer = 0.25 + nbsV + velocity;
-    
-    vec4 oldDisplacement = displacement;
-
-    float oldValue = vsum(displacement);
-    if (isWater(groundHeight)) {
-      //displacement.x += displacement.y + 0.5 * avg;
-      float tl = abs(avg);
-      if (displacement.y != clamp(displacement.y, -displacement.x, tl)) {
-        //displacement.y *= 0.999;
-      }
-      displacement += (velocity.x + 0.5 * avg);
-    } else {
-      displacement += (velocity.x + 0.5 * avg);
-      //displacement.x += 0.5 * avg;
-    }
-
-    // Decay
-    // displacement.x *= 0.99999;
-    //displacement.y = displacement.x - oldValue;
-    //float oldVelocity = displacement.y;
-    //displacement.y = (displacement.y + (displacement.x - oldValue)) * 0.5 * 1.0e-3 + displacement.x - oldValue;
-    
-    //velocity.x = vsum(displacement) - oldValue;
-
-    //displacement.z = displacement.y - oldVelocity;
-    //displacement.x += displacement.z;
-    //displacement.z = mix(displacement.z, displacement.y, 0.5);
-    //displacement.z *= 0.9;
-    //displacement.x += 0.01 * displacement.z;
-    // Rain
-    //displacement.x += 0.001;
-
-    if (!isWater(groundHeight)) {
-      //displacement.y = 0.0;
-    }
-
-    /*
-    if (displacement.x < 0.0) {
-      displacement.xy = vec2(0.0);
-    }
-    if (displacement.x > 1.5) {
-      displacement.x = 1.5;
-      displacement.y /= 1.1;
-    }
-    */
-    
-    //transfer = vsum(velocity) + 0.25 * 0.5 * (nbs - vec4(mine));
-    //transfer = vec4(velocity.x, velocity.x, velocity.z, velocity.z) + 0.25 * 0.5 * (nbs - vec4(mine));
-    //transfer = velocity + nbsV + 0.25 * 0.5 * (nbs - vec4(mine));
-    //transfer = velocity - nbsV + 0.25 * 0.5 * (nbs - vec4(mine)) + 0.1 * avg;
-    
     // That's the height difference (ground + water, neighbour ground + water)
     vec4 delta = (nbg + nbs) - vec4(mine);
+
     // Now make sure the difference is not greater than available water
-    
     checkDelta(delta.x, mine - groundHeight, nbs.x);
     checkDelta(delta.y, mine - groundHeight, nbs.y);
     checkDelta(delta.z, mine - groundHeight, nbs.z);
     checkDelta(delta.w, mine - groundHeight, nbs.w);
-    /*
-    if (delta > 0.0) {
-      delta = min(delta, mine - groundHeight);
-    } else {
-      delta = min(delta, nbs);
-    }
-    */
 
-    //transfer = velocity - nbsV + 0.25 * 0.5 * (nbs - vec4(mine)) + 0.0 * 0.25 * 0.5 * avg;
+    if (!isWater(groundHeight)) {
+      //velocity = -vec4(nbg - groundHeight) * 0.1;
+    }
+
     transfer = velocity - nbsV + 0.25 * 0.5 * delta + 0.0 * 0.25 * 0.5 * avg;
-    //transfer = max(vec4(0.0), transfer);
     transfer = min(vec4(0.0), transfer);
-    float l2 = vsum(abs(transfer) * mine) * 4.0 / 0.25;
-    if (l2 > 0.0) {
-      //transfer *= min(1.0, 1.0 / l2);
-    } else {
-      //transfer = vec4(0.0);
+    if (!isWater(groundHeight)) {
+      //transfer = -vec4(1.0 * max(0.0, mine - groundHeight));
+      //transfer = 0.0 * velocity - 0.0 * nbsV + 0.25 * 0.5 * delta + 0.0 * 0.25 * 0.5 * avg;
+      //transfer = min(vec4(0.0), transfer);
     }
+    if (displacement.x <= 0.0) {
+      transfer = vec4(0.0);
+    }
+
     /*
-    if (mod(waterFrameCount, 2.0) < 0.5) { 
-      transfer = max(vec4(0.0), transfer);
-    } else {
-      transfer = min(vec4(0.0), transfer);
+    float c = 0.1 * mapHeight;
+    //vec4 nbDiff = -sign(nbg - groundHeight - 0.01 / mapHeight);
+    //transfer = min(vec4(0.0), transfer * nbDiff);
+    // transfer should be 0 if nbDiff is 1
+    //float water = groundHeight;
+    float water = mine;
+    if (nbg.x - water > c) {
+      transfer.x = 0.0;
+    }
+    if (nbg.y - water > c) {
+      transfer.y = 0.0;
+    }
+    if (nbg.z - water > c) {
+      transfer.z = 0.0;
+    }
+    if (nbg.w - water > c) {
+      transfer.w = 0.0;
     }
     */
-    //transfer = -transfer;
-    //transfer *= 0.05;
-
-    //transfer = displacement - oldDisplacement;
   }
 
   if (waterShaderMode < 0.5 || (waterShaderMode < 4.5 && waterShaderMode > 3.5)) {
@@ -796,88 +763,58 @@ void main() {
     prevTransfer.z = texture2D(transferTexture, uv + vec2(0.0, -1.0) / resolution.xy).w;
     prevTransfer.w = texture2D(transferTexture, uv + vec2(0.0, 1.0) / resolution.xy).z;
     transfer = texture2D(transferTexture, uv);
-    //velocity = mix(veltransfer;
-    //velocity.xy += 0.01 * vec2(transfer.x + transfer.y, transfer.z + transfer.w);
-    //velocity *= 0.9;
-    //velocity.x += 0.01 * vsum(transfer);
 
-    float oldValue = vsum(displacement);
-    displacement += vsum(transfer);
-    displacement -= vsum(prevTransfer);
-    //velocity.x = vsum(transfer) * 4.0;
-    //velocity = vec4(vsum(displacement) - oldValue);
-    //vec4 diff = displacement - oldValue;
-    vec4 diff = transfer - prevTransfer;
-    //velocity.x = 0.5 * (diff.x + diff.y);
-    //velocity.y = 0.5 * (diff.w + diff.z);
-    
-    //vec2 fv2 = vec2(0.5);
-    //velocity.xy = fv2 * (diff.x + diff.y);
-    //velocity.zw = fv2 * (diff.w + diff.z);
-    //vec2 fv2 = vec2(0.5);
-    //velocity.xy = fv2 * (diff.x - diff.y);
-    //velocity.zw = fv2 * (diff.w - diff.z);
-    //velocity += 0.1 * (transfer - prevTransfer);
-    velocity = 0.5 * (transfer - prevTransfer);
+    float outgoing = vsum(abs(transfer));
+    float incoming = vsum(abs(prevTransfer));
+    float speed = 0.25;
+    float scale = 1.0;
+
     /*
-    if (!isWater(groundHeight)) {
+    float dispx = max(0.0, displacement.x);
+    if (outgoing * speed > dispx) {
+      scale *= dispx / outgoing;
+    } else if (incoming * speed > displacement.x) {
+      scale *= dispx / incoming;
+    }
+    */
+
+    displacement.x += (vsum(transfer) - vsum(prevTransfer)) * speed * scale;
+    if (displacement.x > 1.0) {
+      //displacement.x *= 0.5;
+    }
+    //displacement.x += 0.000001;
+    //displacement.x = max(displacement.x, -mapHeight);
+    //displacement.x = max(displacement.x, 0.0);
+
+    vec4 diff = transfer - prevTransfer;
+    velocity = 0.5 * (transfer - prevTransfer);
+    
+    if (displacement.x < 0.0) {
       velocity = vec4(0.0);
     }
-    if (vsum(displacement) < groundHeight) {
+
+    if (!isWater(groundHeight)) {
+      //velocity += vec4(nbg - groundHeight) * 0.001;
+      //velocity = vec4(0.0);
+      //velocity *= 0.9;
+    }
+    /*
+    if (getDisplacement(displacement) < groundHeight) {
       //velocity = -vec4(0.5);
     }
     */
-    //velocity.xy = mix(velocity.xy, velocity.yx, 0.1);
-    //velocity.zw = mix(velocity.zw, velocity.wz, 0.1);
-    //velocity *= 0.95;
-    //velocity += 1.0e-2 * (transfer - prevTransfer);
-    //velocity *= 0.75;
-    //velocity = mix(velocity, vec4(vsum(displacement) - oldValue), 1.0);
-    //velocity *= 0.5;
-    //velocity += 1.0e-2 * (transfer - prevTransfer);
-    //velocity = mix(velocity, vec4(vsum(velocity)), 0.5);
-    //velocity = 0.25 * vec4(vsum(transfer - prevTransfer));
-
-    //velocity.x = -(diff.x - diff.y);
-    //velocity.y = -(diff.w - diff.z);
-    //velocity = transfer - prevTransfer;
-
-    /*
-    vec4 oldDisplacement = displacement;
-    displacement -= transfer;
-    displacement += prevTransfer;
-    float w = vsum(displacement) * 0.25;
-    vec4 delta = mix(displacement, vec4(w), 0.5) - displacement; 
-    displacement += (delta.xyzw + delta.yzwz) * 0.01;
-    displacement *= 0.9;
-    displacement = clamp(displacement, 0.0, 1.0);
-    //displacement.xy = mix(displacement.xy, displacement.yx, 0.5);
-    //displacement.zw = mix(displacement.zw, displacement.wz, 0.5);
-    velocity = mix(velocity, velocity + 1.0 * (displacement - oldDisplacement), 0.5);
-    velocity *= 0.9;
-    */
-    //displacement += 0.1 *  velocity;
-    //velocity += 0.5 * avg;
-
   }
-  //displacement.y += avg;
-  //velocity = mix(velocity, velocity + vec4(avg), 0.1);
-  //velocity '= avg;
 
-  float lim = 2.0;
-  //displacement = clamp(displacement, -lim, lim);
-  //displacement.w = clamp(displacement.w, 0.0, lim);
-  
   float mapWidth = 64.0;
   float mapHeight = mapWidth;
 
   vec2 dx = vec2(1.0, 0.0) / resolution.xy;
   vec2 dy = vec2(0.0, 1.0) / resolution.xy;
-  float h1 = vsum(texture2D(texture, uv + dx));
-  float h2 = vsum(texture2D(texture, uv + dy));
+  float h1 = getDisplacement(texture2D(texture, uv + dx)) + getGroundHeight(uv + dx);
+  float h2 = getDisplacement(texture2D(texture, uv + dy)) + getGroundHeight(uv + dy);
   float hmfac = 0.5;
-  vec3 v1 = vec3(dx.x * mapWidth, (h1 - vsum(displacement)) * hmfac , dx.y * mapHeight);
-  vec3 v2 = vec3(dy.x * mapWidth, (h2 - vsum(displacement)) * hmfac, dy.y * mapHeight);
+  vec3 v1 = vec3(dx.x * mapWidth, (h1 - getDisplacement(displacement) - groundHeight) * hmfac , dx.y * mapHeight);
+  vec3 v2 = vec3(dy.x * mapWidth, (h2 - getDisplacement(displacement) - groundHeight) * hmfac, dy.y * mapHeight);
   vec3 normal = normalize(cross(v1, v2));
   
   if (waterShaderMode > 3.5) {
@@ -901,6 +838,7 @@ void main() {
   } else if (waterShaderMode > 0.5 && waterShaderMode < 1.5) {
     gl_FragColor = vec4(normal, 1.0);
   } else {
+    displacement.y = displacement.x > 0.0 ? groundHeight + displacement.x : 0.0;
     gl_FragColor = vec4(displacement);
   }
 }
@@ -919,6 +857,7 @@ void main() {
   material.uniforms.velocityTexture  = { value: nullTexture };
   material.uniforms.waterShaderMode  = { value: 0.0 };
   material.uniforms.waterFrameCount  = { value: waterFrameCount };
+  material.uniforms.mapHeight        = { value: config.mapHeight };
   setup.updaters.push(function(frameCount) {
     material.uniforms.accumTime.value += material.uniforms.deltaTime.value;
     let fixedTime = 0.4; // milliseconds
@@ -1009,7 +948,7 @@ const main = function(texture) {
   // cuboids, i.e. all dimensions are equal, given that width (xScale) and
   // height (zScale) are same.
   setup = setupWater(setup);
-  setup = addCubes(setup, setup.scene, 5.0, config.mapWidthIn3DUnits / (config.mapWidthInTiles - 1));
+  setup = addCubes(setup, setup.scene, config.mapHeight, config.mapWidthIn3DUnits / (config.mapWidthInTiles - 1));
 
   setup.scene.add(new THREE.AmbientLight(0xFFFFFFF));
   setup.camera.position.set(config.cameraPosition.x, config.cameraPosition.y, config.cameraPosition.z);
