@@ -104,7 +104,10 @@ const setupRenderer = function(width, height, renderOpts) {
 #ifdef USE_DISPLACEMENTMAP
   vec2 dmuv = vec2(transformed.zx * displacementBias + 0.5) * vec2(1.0, 1.0);
   if (abs(transformed.y) <= 1.0e-6) {
-    transformed.y += abs(texture2D(displacementMap, dmuv).y) * displacementScale;
+    vec4 dtex = texture2D(displacementMap, dmuv);
+    //float disp = abs(dtex.x + dtex.y + dtex.z + dtex.w) * displacementScale;
+    float disp = abs(dtex.x) * displacementScale;
+    transformed.y += disp;
   }
 #endif
 `;
@@ -480,7 +483,28 @@ const setupWater = function(setup) {
 			stencilBuffer: false,
 			depthBuffer: false
 		});
-  /*
+  setup.waterRenderTargetVelocity1 =
+    new THREE.WebGLRenderTarget(width, height, {
+			wrapS: THREE.RepeatWrapping,
+			wrapT: THREE.RepeatWrapping,
+			minFilter: THREE.NearestFilter,
+			magFilter: THREE.NearestFilter,
+			format: THREE.RGBAFormat,
+			type: ( /(iPad|iPhone|iPod)/g.test( navigator.userAgent ) ) ? THREE.HalfFloatType : THREE.FloatType,
+			stencilBuffer: false,
+			depthBuffer: false
+		});
+  setup.waterRenderTargetVelocity2 =
+    new THREE.WebGLRenderTarget(width, height, {
+			wrapS: THREE.RepeatWrapping,
+			wrapT: THREE.RepeatWrapping,
+			minFilter: THREE.NearestFilter,
+			magFilter: THREE.NearestFilter,
+			format: THREE.RGBAFormat,
+			type: ( /(iPad|iPhone|iPod)/g.test( navigator.userAgent ) ) ? THREE.HalfFloatType : THREE.FloatType,
+			stencilBuffer: false,
+			depthBuffer: false
+		});
   setup.waterRenderTargetTransfer =
     new THREE.WebGLRenderTarget(width, height, {
 			wrapS: THREE.RepeatWrapping,
@@ -492,7 +516,6 @@ const setupWater = function(setup) {
 			stencilBuffer: false,
 			depthBuffer: false
 		});
-    */
   setup.waterNormalsRenderTarget =
     new THREE.WebGLRenderTarget(width, height, {
 			wrapS: THREE.RepeatWrapping,
@@ -508,9 +531,12 @@ const setupWater = function(setup) {
   //setup.waterRenderTarget2 = new THREE.WebGLRenderTarget(width, height);
   setDefaultTextureProperties(setup.waterRenderTarget1.texture);
   setDefaultTextureProperties(setup.waterRenderTarget2.texture);
-  //setDefaultTextureProperties(setup.waterRenderTargetTransfer.texture);
+  setDefaultTextureProperties(setup.waterRenderTargetVelocity1.texture);
+  setDefaultTextureProperties(setup.waterRenderTargetVelocity2.texture);
+  setDefaultTextureProperties(setup.waterRenderTargetTransfer.texture);
   setDefaultTextureProperties(setup.waterNormalsRenderTarget.texture);
   setup.waterRenderTargets = [setup.waterRenderTarget1, setup.waterRenderTarget2];
+  setup.waterRenderTargetVelocities = [setup.waterRenderTargetVelocity1, setup.waterRenderTargetVelocity2];
 
   const vertexShader = config.quadVertexShader;
 
@@ -522,7 +548,8 @@ uniform vec2 mapSizeInTiles;
 uniform sampler2D texture;
 uniform sampler2D tileIndexTexture;
 uniform sampler2D terrainTexture;
-//uniform sampler2D transferTexture;
+uniform sampler2D transferTexture;
+uniform sampler2D velocityTexture;
 uniform float waterFrameCount;
 uniform float time;
 uniform float deltaTime;
@@ -534,17 +561,50 @@ float rand(vec2 co){
 
 bool isWater(float height) {
   // TODO: uniform
-  // XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX: TODO
   bool isWater = height <= 0.1;
   return isWater;
 }
 
 float normHeight(float water, float groundHeight) {
-  // XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX: TODO
   // groundHeight = 0.0;
   float myHeight = water >= 0.0 ? water + groundHeight : groundHeight;
-  //return myHeight;
-  return water;
+  return myHeight;
+  //return water;
+}
+
+float vsum(vec4 a) {
+  //return (a.x + a.y + a.z + a.w) * 0.25;
+  return a.x;
+}
+
+#define DRAG_MULT 0.048
+
+vec2 wavedx(vec2 position, vec2 direction, float speed, float frequency, float timeshift) {
+    float x = dot(direction, position) * frequency + timeshift * speed;
+    float wave = exp(sin(x) - 1.0);
+    float dx = wave * cos(x);
+    return vec2(wave, -dx);
+}
+
+float getwaves(vec2 position){
+	float iter = 0.0;
+    float phase = 6.0;
+    float speed = 2.0;
+    float weight = 1.0;
+    float w = 0.0;
+    float ws = 0.0;
+    for(int i=0;i<48;i++){
+        vec2 p = vec2(sin(iter), cos(iter));
+        vec2 res = wavedx(position, p, speed, phase, time);
+        position += normalize(p) * res.y * weight * DRAG_MULT;
+        w += res.x * weight;
+        iter += 12.0;
+        ws += weight;
+        weight = mix(weight, 0.0, 0.2);
+        phase *= 1.18;
+        speed *= 1.07;
+    }
+    return w / ws;
 }
 
 void main() {
@@ -554,175 +614,185 @@ void main() {
   vec4 tileIndex = texture2D(tileIndexTexture, tileIndexUV);
   float groundHeight = tileIndex.z;
   if (!isWater(groundHeight)) {
-    return;
+    //return;
   }
 
-  vec4 avg = vec4(0.0);
-  vec4 prevTransfer = vec4(0.0);
   vec4 displacement = texture2D(texture, uv);
-  float myHeight = normHeight(displacement.w, groundHeight);
-  for (float dx = -1.0; dx <= 1.0; dx += 1.0) {
-    for (float dy = -1.0; dy <= 1.0; dy += 1.0) {
-      vec2 uv2 = fract(uv + vec2(dx, dy) / resolution.xy + vec2(1.0));
-      vec4 nb = texture2D(texture, uv2);
+  vec4 velocity = texture2D(velocityTexture, uv);
 
-      if (abs(abs(dx) + abs(dy) - 1.0) > 1.0e-6) {
-        continue; 
-      }
+  vec4 nbs = vec4(0.0);
+  nbs.x = vsum(texture2D(texture, uv + vec2(-1.0, 0.0) / resolution.xy));
+  nbs.y = vsum(texture2D(texture, uv + vec2(1.0, 0.0) / resolution.xy));
+  nbs.z = vsum(texture2D(texture, uv + vec2(0.0, -1.0) / resolution.xy));
+  nbs.w = vsum(texture2D(texture, uv + vec2(0.0, 1.0) / resolution.xy));
 
-      /*
-      vec4 transferNB = texture2D(transferTexture, uv2);
-      if (dx < 0.0) {
-        prevTransfer.y = transferNB.y;
-      } else {
-        prevTransfer.x = transferNB.x;
-      }
-      if (dy < 0.0) {
-        prevTransfer.w = transferNB.w;
-      } else {
-        prevTransfer.z = transferNB.z;
-      }
-      */
+  float mine = vsum(displacement);
+  float avg = 0.25 * ((nbs.x - mine) + (nbs.y - mine) + (nbs.z - mine) + (nbs.w - mine));
 
-      tileIndexUV = floor(uv2 * mapSizeInTiles) / mapSizeInTiles;
-      tileIndex = texture2D(tileIndexTexture, tileIndexUV);
-      float groundHeight2 = tileIndex.z;
-      if (!isWater(groundHeight2)) {
-        continue;
-      }
+  vec4 nbsV = vec4(0.0);
+  nbsV.x = texture2D(velocityTexture, uv + vec2(-1.0, 0.0) / resolution.xy).y;
+  nbsV.y = texture2D(velocityTexture, uv + vec2(1.0, 0.0) / resolution.xy).x;
+  nbsV.z = texture2D(velocityTexture, uv + vec2(0.0, -1.0) / resolution.xy).w;
+  nbsV.w = texture2D(velocityTexture, uv + vec2(0.0, 1.0) / resolution.xy).z;
 
-      /*
-      if (mod(waterFrameCount, 4.0) == 0.0 && dx < 0.0) {
-        continue;
-      }
-      if (mod(waterFrameCount, 4.0) == 0.0 && dx < 0.0) {
-        continue;
-      }
-      */
-
-      float nbHeight = normHeight(nb.w, groundHeight2);
-
-      if (abs(abs(dx) - 1.0) <= 1.0e-6) {
-        float avgNX = nbHeight - myHeight;
-        if (!isWater(groundHeight2)) {
-          avgNX = min(avgNX, nbHeight - groundHeight2);
-        }
-        avgNX *= 0.5;
-        if (dx < 0.0) {
-          avg.x = avgNX;
-          avg.x = (nb.w - displacement.w) * 0.5;
-        } else {
-          avg.y = avgNX;
-          avg.y = (nb.w - displacement.w) * 0.5;
-        }
-      }
-      if (abs(abs(dy) - 1.0) <= 1.0e-6) {
-        float avgNY = nbHeight - myHeight;
-        if (!isWater(groundHeight2)) {
-          avgNY = min(avgNY, nbHeight - groundHeight2);
-        }
-        avgNY *= 0.5;
-        if (dy < 0.0) {
-          avg.z = avgNY;
-          avg.z = (nb.w - displacement.w) * 0.5;
-        } else {
-          avg.w = avgNY;
-          avg.w = (nb.w - displacement.w) * 0.5;
-        }
-      }
-    }
-  }
-
-  if (waterFrameCount == 0.0) {
+  //if (mod(waterFrameCount, 1000.0) == 0.0) {
+  float fac = 10.0;
+  if (waterFrameCount < 0.5) {
+    //displacement.y = (vec4(sin(fac *  6.28 * uv.x) + sin(fac * 6.28 * uv.y) + 0.0) * 0.1).x; // * vec4(0.000125);
+    // velocity = vec4(0.0);
     displacement = vec4(0.0);
-    displacement.w = 0.5;
+    float b = 2.0;
+    float s = 0.0;
+    for (float p = 1.0; p <= 10.0; p++) {
+      s += rand(floor(uv * pow(b, p))) / p;
+    }
+    //displacement.x = 0.5 * s;
+    //displacement.y = 0.005 * s;
+    displacement.x = getwaves(uv * 8.0) * 4.0;
   }
-  float minWave = 0.1;
-  //if (abs(displacement.x) <= minWave || abs(displacement.z) <= minWave) {
-  if (waterFrameCount < 100.0) {
-    float fac = 20.0;
-    vec2 uv2 = floor(uv * fac) / fac;
-    vec2 uv3 = fract(uv * fac);
-    fac = rand(floor(uv * 10.0));
-    float speed = 0.05 * sin(10.0 * time) * (sin(6.28 * fac * uv.x) + sin(6.28 * fac * uv.y));
-    displacement.w += 1.0 * speed;
+  //displacement.x += 0.9 * displacement.x + getwaves(uv * 10.0) * 4.0;
+
+  //displacement.y += (vec4(sin(fac *  6.28 * uv.x) + sin(fac * 6.28 * uv.y) + 0.0) * 0.0001).x * sin(100.0 * time);
+  if (mod(time, 10.0) < 1.0) {
   }
-  if (mod(waterFrameCount, 2.0) == 0.0) {
-    displacement.x += 0.1 * (avg.x + avg.y);
-    //float maxTransferX = min(avgX, displacement.x);
-    //displacement.x = maxTransferX;
-  } else {
-    displacement.z += 0.1 * (avg.z + avg.w);
-    //float maxTransferZ = min(avgY, displacement.z);
-    //displacement.z = maxTransferZ;
-  }
-  displacement.w = mix(displacement.w, displacement.w + displacement.x + displacement.z, 0.25);
+  //fac = 100.0;
+  //displacement.y += 0.001 * distance(fract(uv * fac), vec2(0.5)) * sin(6.28 * time);
 
   // X: dx = -1
   // Y: dx = +1
   // Z: dy = -1
   // W: dy = +1
   // float delta = displacement.w - oldValue;
-  vec4 transfer = vec4(avg.xy * displacement.x, avg.zw * displacement.z);
-  //vec4 transfer = vec4(displacement.x, displacement.x, displacement.z, displacement.z);
-
-  if (waterShaderMode < 0.5) {
-    //transfer = texture2D(transferTexture, uv);
-    //displacement.w += transfer.x + transfer.y + transfer.z + transfer.w;
-    //displacement.w += prevTransfer.x + prevTransfer.y + prevTransfer.z + prevTransfer.w;
-    /*
-    if (mod(waterFrameCount, 2.0) == 0.0) {
-      displacement.w += transfer.x + transfer.y;
-      displacement.w -= prevTransfer.x + prevTransfer.y;
-    } else {
-      displacement.w += transfer.z + transfer.w;
-      displacement.w -= prevTransfer.z + prevTransfer.w;
+  
+  //vec4 transfer = 0.1 * vec4(avg.xy * displacement.x, avg.zw * displacement.z);
+  
+  vec4 transfer = vec4(0.0);
+  if (waterShaderMode > 2.5 && waterShaderMode < 3.5) {
+    float w = vsum(displacement);
+    // Transfer max half
+    w *= 1.0;
+    //vec4 transferPerNeighbour = (vec4(max(0.0, w - nbs.x), max(0.0, w - nbs.y), max(0.0, w - nbs.z), max(0.0, w - nbs.w)));
+    vec4 transferPerNeighbour = (vec4(max(0.0, w - nbs.x), max(0.0, w - nbs.y), max(0.0, w - nbs.z), max(0.0, w - nbs.w)));
+    //transferPerNeighbour = vec4(w) * 0.25;
+    //transferPerNeighbour = vec4(w) * 0.25;
+    float l = vsum(abs(transferPerNeighbour));
+    if (l > 0.0) {
+      transferPerNeighbour /= l;
     }
-    */
-  //} else if (waterShaderMode > 2.5 && waterShaderMode < 3.5) {
+    transfer = 0.5 * (transferPerNeighbour + nbsV + velocity);
+    //transfer = 0.5 * (transferPerNeighbour + 0.0 * velocity);
+    //transfer = 0.25 + nbsV + velocity;
   }
+
+  if (waterShaderMode < 0.5 || (waterShaderMode < 4.5 && waterShaderMode > 3.5)) {
+    vec4 prevTransfer = vec4(0.0);
+    prevTransfer.x = texture2D(transferTexture, uv + vec2(-1.0, 0.0) / resolution.xy).y;
+    prevTransfer.y = texture2D(transferTexture, uv + vec2(1.0, 0.0) / resolution.xy).x;
+    prevTransfer.z = texture2D(transferTexture, uv + vec2(0.0, -1.0) / resolution.xy).w;
+    prevTransfer.w = texture2D(transferTexture, uv + vec2(0.0, 1.0) / resolution.xy).z;
+    transfer = texture2D(transferTexture, uv);
+    //velocity = mix(veltransfer;
+    //velocity.xy += 0.01 * vec2(transfer.x + transfer.y, transfer.z + transfer.w);
+    //velocity *= 0.9;
+    //velocity.x += 0.01 * vsum(transfer);
+
+    /*
+    vec4 oldDisplacement = displacement;
+    displacement -= transfer;
+    displacement += prevTransfer;
+    float w = vsum(displacement) * 0.25;
+    vec4 delta = mix(displacement, vec4(w), 0.5) - displacement; 
+    displacement += (delta.xyzw + delta.yzwz) * 0.01;
+    displacement *= 0.9;
+    displacement = clamp(displacement, 0.0, 1.0);
+    //displacement.xy = mix(displacement.xy, displacement.yx, 0.5);
+    //displacement.zw = mix(displacement.zw, displacement.wz, 0.5);
+    velocity = mix(velocity, velocity + 1.0 * (displacement - oldDisplacement), 0.5);
+    velocity *= 0.9;
+    */
+    //displacement += 0.1 *  velocity;
+    //velocity += 0.5 * avg;
+  }
+
+  float oldValue = displacement.x;
+  if (isWater(groundHeight)) {
+    //displacement.x += displacement.y + 0.5 * avg;
+    float tl = abs(avg);
+    if (displacement.y != clamp(displacement.y, -displacement.x, tl)) {
+      //displacement.y *= 0.999;
+    }
+    displacement.x += displacement.y + 0.5 * avg;
+  } else {
+    displacement.x += displacement.y + 0.5 * avg;
+    //displacement.x += 0.5 * avg;
+  }
+  // Decay
+  // displacement.x *= 0.99999;
+  //displacement.y = displacement.x - oldValue;
+  //float oldVelocity = displacement.y;
+  //displacement.y = (displacement.y + (displacement.x - oldValue)) * 0.5 * 1.0e-3 + displacement.x - oldValue;
+  displacement.y = displacement.x - oldValue;
+  //displacement.z = displacement.y - oldVelocity;
+  //displacement.x += displacement.z;
+  //displacement.z = mix(displacement.z, displacement.y, 0.5);
+  //displacement.z *= 0.9;
+  //displacement.x += 0.01 * displacement.z;
+  // Rain
+  //displacement.x += 0.001;
+
+  if (!isWater(groundHeight)) {
+    //displacement.y = 0.0;
+  }
+
+  /*
+  if (displacement.x < 0.0) {
+    displacement.xy = vec2(0.0);
+  }
+  if (displacement.x > 1.5) {
+    displacement.x = 1.5;
+    displacement.y /= 1.1;
+  }
+
+  */
+  //displacement.y += avg;
+  //velocity = mix(velocity, velocity + vec4(avg), 0.1);
+  //velocity '= avg;
 
   float lim = 2.0;
-  displacement.w = clamp(displacement.w, -lim, lim);
+  //displacement = clamp(displacement, -lim, lim);
   //displacement.w = clamp(displacement.w, 0.0, lim);
   
-  displacement.y = (displacement.w + lim) * 0.5;
-  //displacement.y = displacement.w;
-  if (!isWater(groundHeight)) {
-    if (displacement.w >= groundHeight) {
-      //displacement.y = ;
-    }
-  }
-
   float mapWidth = 64.0;
   float mapHeight = mapWidth;
 
   vec2 dx = vec2(1.0, 0.0) / resolution.xy;
   vec2 dy = vec2(0.0, 1.0) / resolution.xy;
-  float h1 = texture2D(texture, uv + dx).y;
-  float h2 = texture2D(texture, uv + dy).y;
+  float h1 = vsum(texture2D(texture, uv + dx));
+  float h2 = vsum(texture2D(texture, uv + dy));
   float hmfac = 0.5;
-  vec3 v1 = vec3(dx.x * mapWidth, (h1 - displacement.y) * hmfac , dx.y * mapHeight);
-  vec3 v2 = vec3(dy.x * mapWidth, (h2 - displacement.y) * hmfac, dy.y * mapHeight);
+  vec3 v1 = vec3(dx.x * mapWidth, (h1 - vsum(displacement)) * hmfac , dx.y * mapHeight);
+  vec3 v2 = vec3(dy.x * mapWidth, (h2 - vsum(displacement)) * hmfac, dy.y * mapHeight);
   vec3 normal = normalize(cross(v1, v2));
   
-  if (waterShaderMode > 2.5) {
-    gl_FragColor = vec4(transfer);
-  } else if (waterShaderMode > 1.5) {
+  if (waterShaderMode > 3.5) {
+    gl_FragColor = velocity;
+  } else if (waterShaderMode > 2.5 && waterShaderMode < 3.5) {
+    gl_FragColor = transfer;
+  } else if (waterShaderMode > 1.5 && waterShaderMode < 2.5) {
     vec3 light = normalize(vec3(-1.0, 1.0, -1.0));
     // TODO: scale pos
     float C = 50.0;
     vec3 cameraPos = vec3(-C, C, -C);
-    vec3 pos = vec3((uv.x - 0.5) * mapWidth, displacement.y, (uv.y - 0.5) * mapHeight);
+    vec3 pos = vec3((uv.x - 0.5) * mapWidth, vsum(displacement), (uv.y - 0.5) * mapHeight);
     vec3 incomingRay = -normalize(pos * vec3(1.0, 1.0, 1.0) - cameraPos);
     vec3 refractionDir = refract(incomingRay, normal, 1.0 / 1.333);
     vec2 nuv =
       (pos - sign(pos.y) * sign(refractionDir.y) * refractionDir * 
-      (abs(pos.y) / abs(refractionDir.y))).xz / vec2(mapWidth, mapHeight) + vec2(0.5);
+      (abs(pos.y) / max(1.0e-6, abs(refractionDir.y)))).xz / vec2(mapWidth, mapHeight) + vec2(0.5);
     vec3 color = texture2D(terrainTexture, nuv).rgb;
     color *= (0.5 + dot(-light, normal));
     gl_FragColor = vec4(color, 1.0);
-  } else if (waterShaderMode > 0.5) {
+  } else if (waterShaderMode > 0.5 && waterShaderMode < 1.5) {
     gl_FragColor = vec4(normal, 1.0);
   } else {
     gl_FragColor = vec4(displacement);
@@ -733,14 +803,16 @@ void main() {
   setupQuad(setup, width, height, vertexShader, fragmentShader, setup.waterRenderTarget1.texture);
   setup.waterQuadScene = setup.quadScene;
   setup.waterQuadMaterial = setup.quadMaterial;
-  setup.waterQuadMaterial.uniforms.tileIndexTexture = { value: setup.tileIndexTexture };
   setup.waterQuadMaterial.uniforms.mapSizeInTiles = { value: new THREE.Vector2(config.mapWidthInTiles, config.mapHeightInTiles) };
   let waterFrameCount = 0;
   const material = setup.waterQuadMaterial;
-  material.uniforms.terrainTexture = { value: setup.terrainRenderTarget.texture };
-  // material.uniforms.transferTexture = { value: new THREE.Texture() };
-  material.uniforms.waterShaderMode = { value: 0.0 };
-  material.uniforms.waterFrameCount = { value: waterFrameCount };
+  const nullTexture = setup.terrainRenderTarget.texture;
+  material.uniforms.tileIndexTexture = { value: setup.tileIndexTexture };
+  material.uniforms.terrainTexture   = { value: setup.terrainRenderTarget.texture };
+  material.uniforms.transferTexture  = { value: nullTexture };
+  material.uniforms.velocityTexture  = { value: nullTexture };
+  material.uniforms.waterShaderMode  = { value: 0.0 };
+  material.uniforms.waterFrameCount  = { value: waterFrameCount };
   setup.updaters.push(function(frameCount) {
     material.uniforms.accumTime.value += material.uniforms.deltaTime.value;
     let fixedTime = 0.4; // milliseconds
@@ -751,25 +823,40 @@ void main() {
       const rts = setup.waterRenderTargets;
       const wrt = rts[waterFrameCount % 2];
       const wrt2 = rts[(waterFrameCount + 1) % 2];
-      setup.waterQuadMaterial.uniforms.texture.value = wrt2.texture;
+      const rtsV = setup.waterRenderTargetVelocities;
+      const wrtV = rtsV[waterFrameCount % 2];
+      const wrtV2 = rtsV[(waterFrameCount + 1) % 2];
       //setup.renderer.setSize(wrt.width, wrt.height);
       
       material.uniforms.accumTime.value -= fixedTime;
       material.uniforms.accumTime.value = Math.max(0.0, material.uniforms.accumTime.value);
-      material.uniforms.waterFrameCount.value = waterFrameCount;
+      material.uniforms.texture.value = wrt2.texture;
+      material.uniforms.velocityTexture.value = wrtV.texture;
 
       /*
-      material.uniforms.transferTexture = { value: null };
-      material.uniforms.waterShaderMode = { value: 3.0 };
+      material.uniforms.transferTexture.value = nullTexture;
+      material.uniforms.waterShaderMode.value = 3.0;
       setup.renderer.setRenderTarget(setup.waterRenderTargetTransfer);
       setup.renderer.render(setup.waterQuadScene, setup.camera);
       */
 
-      // material.uniforms.transferTexture = { value: setup.waterRenderTargetTransfer.texture };
+      material.uniforms.transferTexture.value = setup.waterRenderTargetTransfer.texture;
       material.uniforms.waterShaderMode.value = 0.0;
       setup.renderer.setRenderTarget(wrt);
       setup.renderer.render(setup.waterQuadScene, setup.camera);
+
+      /*
+      material.uniforms.texture.value = wrt.texture;
+      material.uniforms.velocityTexture.value = wrtV2.texture;
+      material.uniforms.waterShaderMode.value = 4.0;
+      setup.renderer.setRenderTarget(wrtV);
+      setup.renderer.render(setup.waterQuadScene, setup.camera);
+      */
+
+      material.uniforms.transferTexture.value = nullTexture;
+
       waterFrameCount++;
+      material.uniforms.waterFrameCount.value = waterFrameCount;
       count++;
     }
     material.uniforms.waterShaderMode.value = 1.0;
