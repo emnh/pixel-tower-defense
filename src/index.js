@@ -13,6 +13,8 @@ const Stats = require('stats-js');
 
 const config = {
   floatSize: 4,
+  // This is max supported by THREE
+  lightCount: 4,
   textureWidth: 4096,
   textureHeight: 4096,
   testWidth: 200,
@@ -31,7 +33,7 @@ const config = {
   waterHeightInPixels: 1024,
   mapDetailX: 32,
   mapDetailY: 32,
-  mapHeight: 5
+  mapYScale: 5
 };
 // Terrain has width, height and depth.
 // Depth is the Y axis, i.e. up and down.
@@ -331,6 +333,9 @@ const addPlane = function(setup, scene) {
       config.mapWidthInTiles * config.mapDetailX,
       config.mapHeightInTiles * config.mapDetailY);
   const material = new THREE.MeshStandardMaterial({ map: setup.terrainRenderTarget.texture });
+  material.metalness = 1.0;
+  material.roughness = 0.0;
+  material.refractionRation = 1.0 / 1.333;
   const matrix =  new THREE.Matrix4().makeRotationX(-Math.PI / 2.0);
   const matrix2 =  new THREE.Matrix4().makeRotationZ(-Math.PI / 2.0);
   geo.applyMatrix(matrix2);
@@ -462,6 +467,61 @@ const addCubes = function(setup, scene, heightScale, yScale) {
   return setup;
 };
 
+const setupLighting = function(setup, width, height) {
+  setup.lightingRenderTarget =
+    new THREE.WebGLRenderTarget(width, height, {
+			wrapS: THREE.RepeatWrapping,
+			wrapT: THREE.RepeatWrapping,
+			minFilter: THREE.NearestFilter,
+			magFilter: THREE.NearestFilter,
+			format: THREE.RGBAFormat,
+			type: ( /(iPad|iPhone|iPod)/g.test( navigator.userAgent ) ) ? THREE.HalfFloatType : THREE.FloatType,
+			stencilBuffer: false,
+			depthBuffer: false
+		});
+  const vertexShader = config.quadVertexShader;
+  const fragmentShader = `
+uniform vec2 resolution;
+uniform sampler2D texture;
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / resolution.xy;
+  //vec4 color = texture2D(texture, uv);
+  vec4 color = vec4(uv.x, 0.0, uv.y, 1.0);
+  //color.r = pow(10.0 * (color.r + 1.0), 10.0);
+  //color.b = pow(10.0 * (color.b + 1.0), 10.0);
+  //color.r = 1.0 / color.r;
+  //color.b = 1.0 / color.b;
+  gl_FragColor = color;
+}
+`;
+
+  setup = setupQuad(setup, width, height, vertexShader, fragmentShader, new THREE.Texture());
+  setup.lightingScene = setup.quadScene;
+  setup.lightingQuadMaterial = setup.quadMaterial;
+  //setup.terrainMesh.material.lightMap = setup.lightingRenderTarget.texture;
+  //setup.terrainMeshWater.material.lightMap = setup.lightingRenderTarget.texture;
+  /*
+  setup.terrainMesh.material.emissive = new THREE.Color(0xFFFFFF);
+  setup.terrainMesh.material.emissiveMap = setup.lightingRenderTarget.texture;
+  setup.terrainMeshWater.material.emissive = new THREE.Color(0xFFFFFF);
+  setup.terrainMeshWater.material.emissiveMap = setup.lightingRenderTarget.texture;
+  */
+
+  /*
+  const geometry = setup.terrainMesh.geometry;
+  const uvs = geometry.attributes.uv.array;
+  geometry.setAttribute( 'uv2', new THREE.BufferAttribute( uvs, 2 ) );
+  setup.terrainMesh.geometry = geometry;
+  */
+
+  setup.updaters.push(function() {
+    setup.renderer.setRenderTarget(setup.lightingRenderTarget);
+    setup.renderer.render(setup.lightingScene, setup.camera);
+  });
+  return setup;
+};
+
 const setupWater = function(setup) {
   const width = config.waterWidthInPixels;
   const height = config.waterHeightInPixels;
@@ -532,6 +592,17 @@ const setupWater = function(setup) {
 			stencilBuffer: false,
 			depthBuffer: false
 		});
+  setup.waterColorRenderTarget =
+    new THREE.WebGLRenderTarget(width, height, {
+			wrapS: THREE.RepeatWrapping,
+			wrapT: THREE.RepeatWrapping,
+			minFilter: THREE.NearestFilter,
+			magFilter: THREE.NearestFilter,
+			format: THREE.RGBAFormat,
+			type: ( /(iPad|iPhone|iPod)/g.test( navigator.userAgent ) ) ? THREE.HalfFloatType : THREE.FloatType,
+			stencilBuffer: false,
+			depthBuffer: false
+		});
   //setup.waterRenderTarget1 = new THREE.WebGLRenderTarget(width, height);
   //setup.waterRenderTarget2 = new THREE.WebGLRenderTarget(width, height);
   setDefaultTextureProperties(setup.waterRenderTarget1.texture);
@@ -559,7 +630,7 @@ uniform float waterFrameCount;
 uniform float time;
 uniform float deltaTime;
 uniform float waterShaderMode;
-uniform float mapHeight;
+uniform float mapYScale;
 
 float rand(vec2 co){
   return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
@@ -602,7 +673,7 @@ vec4 gaussian(sampler2D texture) {
 
 bool isWater(float height) {
   // TODO: uniform
-  bool isWater = height <= 0.1 * mapHeight;
+  bool isWater = height <= 0.1 * mapYScale;
   return isWater;
 }
 
@@ -665,7 +736,7 @@ float getGroundHeight(vec2 uv) {
   vec2 tileIndexUV = floor(uv * mapSizeInTiles) / mapSizeInTiles;
   vec4 tileIndex = texture2D(tileIndexTexture, tileIndexUV);
   float groundHeight = tileIndex.z;
-  return mapHeight * groundHeight;
+  return mapYScale * groundHeight;
 }
 
 float checkDelta(float delta, float waterMine, float waterNB) {
@@ -770,7 +841,7 @@ void main() {
     }
 
     /*
-    float c = 0.1 * mapHeight;
+    float c = 0.1 * mapYScale;
     //vec4 nbDiff = -sign(nbg - groundHeight - 0.01 / mapHeight);
     //transfer = min(vec4(0.0), transfer * nbDiff);
     // transfer should be 0 if nbDiff is 1
@@ -840,6 +911,7 @@ void main() {
     */
   }
 
+  // TODO: scale pos
   float mapWidth = 64.0;
   float mapHeight = mapWidth;
 
@@ -847,10 +919,11 @@ void main() {
   vec2 dy = vec2(0.0, 1.0) / resolution.xy;
   float h1 = getDisplacement(texture2D(texture, uv + dx)) + getGroundHeight(uv + dx);
   float h2 = getDisplacement(texture2D(texture, uv + dy)) + getGroundHeight(uv + dy);
-  float hmfac = 0.5;
+  float hmfac = 0.2;
   vec3 v1 = vec3(dx.x * mapWidth, (h1 - getDisplacement(displacement) - groundHeight) * hmfac , dx.y * mapHeight);
   vec3 v2 = vec3(dy.x * mapWidth, (h2 - getDisplacement(displacement) - groundHeight) * hmfac, dy.y * mapHeight);
   vec3 normal = normalize(cross(v1, v2));
+  normal.y = -normal.y;
   
   if (waterShaderMode > 4.5) {
     gl_FragColor = gaussian(texture);
@@ -861,16 +934,18 @@ void main() {
   } else if (waterShaderMode > 1.5 && waterShaderMode < 2.5) {
     vec3 light = normalize(vec3(-1.0, 1.0, -1.0));
     // TODO: scale pos
+    // TODO: set camera pos
     float C = 50.0;
     vec3 cameraPos = vec3(-C, C, -C);
     vec3 pos = vec3((uv.x - 0.5) * mapWidth, vsum(displacement), (uv.y - 0.5) * mapHeight);
-    vec3 incomingRay = -normalize(pos * vec3(1.0, 1.0, 1.0) - cameraPos);
+    vec3 incomingRay = normalize(pos * vec3(1.0, 1.0, 1.0) - cameraPos);
     vec3 refractionDir = refract(incomingRay, normal, 1.0 / 1.333);
     vec2 nuv =
       (pos - sign(pos.y) * sign(refractionDir.y) * refractionDir * 
       (abs(pos.y) / max(1.0e-6, abs(refractionDir.y)))).xz / vec2(mapWidth, mapHeight) + vec2(0.5);
     vec3 color = texture2D(terrainTexture, nuv).rgb;
-    color *= (0.5 + dot(-light, normal));
+    //color *= (0.5 + max(0.0, dot(light, normal)));
+    color *= max(0.0, dot(light, normal));
     gl_FragColor = vec4(color, 1.0);
   } else if (waterShaderMode > 0.5 && waterShaderMode < 1.5) {
     gl_FragColor = vec4(normal, 1.0);
@@ -894,10 +969,11 @@ void main() {
   material.uniforms.velocityTexture  = { value: nullTexture };
   material.uniforms.waterShaderMode  = { value: 0.0 };
   material.uniforms.waterFrameCount  = { value: waterFrameCount };
-  material.uniforms.mapHeight        = { value: config.mapHeight };
+  material.uniforms.mapYScale        = { value: config.mapYScale };
   setup.updaters.push(function(frameCount) {
     material.uniforms.accumTime.value += material.uniforms.deltaTime.value;
     let fixedTime = 0.4; // milliseconds
+    //let fixedTime = 16; // milliseconds
     let count = 0;
     //console.log(material.uniforms.accumTime.value);
     //while (waterFrameCount < 10000 || material.uniforms.accumTime.value >= fixedTime) {
@@ -962,12 +1038,15 @@ void main() {
 
     // Render water surface color
     material.uniforms.waterShaderMode.value = 2.0;
-    setup.renderer.setRenderTarget(setup.waterNormalsRenderTarget);
+    setup.renderer.setRenderTarget(setup.waterColorRenderTarget);
     setup.renderer.render(setup.waterQuadScene, setup.camera);
 
     // TODO: maybe relocate this line
     setup.terrainMeshWater.material.displacementMap = wrt.texture;
-    setup.terrainMeshWater.material.map = setup.waterNormalsRenderTarget.texture;
+    //setup.terrainMeshWater.material.lightMap = setup.waterNormalsRenderTarget.texture;
+    setup.terrainMeshWater.material.normalMap = setup.waterNormalsRenderTarget.texture;
+    setup.terrainMeshWater.material.normalMapType = THREE.ObjectSpaceNormalMap;
+    setup.terrainMeshWater.material.map = setup.waterColorRenderTarget.texture;
   });
 
   return setup;
@@ -978,7 +1057,7 @@ const main = function(texture) {
 
   document.body.style = 'margin: 0px; padding: 0px; overflow: hidden;';
 
-  let setup = setupRenderer(window.innerWidth, window.innerHeight, {});
+  let setup = setupRenderer(window.innerWidth, window.innerHeight, { maxLights: config.lightCount });
   setup.tileTexture = setDefaultTextureProperties(texture);
   setup = setupRenderTerrain2D(setup, sets[16]);
   setup = setupScreenCopyQuad(setup, setup.terrainRenderTarget.texture);
@@ -996,12 +1075,41 @@ const main = function(texture) {
   // cuboids, i.e. all dimensions are equal, given that width (xScale) and
   // height (zScale) are same.
   setup = setupWater(setup);
-  setup = addCubes(setup, setup.scene, config.mapHeight, config.mapWidthIn3DUnits / (config.mapWidthInTiles - 1));
+  setup = addCubes(setup, setup.scene, config.mapYScale, config.mapWidthIn3DUnits / (config.mapWidthInTiles - 1));
+  setup = setupLighting(setup, config.mapWidthInPixels, config.mapHeightInPixels);
 
-  setup.scene.add(new THREE.AmbientLight(0xFFFFFFF));
+  //setup.scene.add(new THREE.AmbientLight(0xFFFFFFF));
+  const dirLight = new THREE.DirectionalLight(0xFFFFFF);
+  //dirLight.position.set(new THREE.Vector3(0.65, 1.0, 0.65));
+  //dirLight.position.set(-0.65, 1.0, -0.65);
   setup.camera.position.set(config.cameraPosition.x, config.cameraPosition.y, config.cameraPosition.z);
+  dirLight.position.set(setup.camera.position.x, setup.camera.position.y, setup.camera.position.z);
+  dirLight.lookAt(setup.scene.position);
+  //dirLight.intensity = 2.0;
+  dirLight.intensity = 1.0;
+  setup.scene.add(dirLight);
+  const lightCount = config.lightCount;
+  const lc2 = Math.round(Math.sqrt(lightCount));
+  for (let i = 0; i < lightCount; i++) {
+    const pointLight = new THREE.PointLight(new THREE.Color(Math.random(), 0.5 * Math.random(), Math.random()), 4, 0, 1.0);
+    //const pointLight = new THREE.PointLight(new THREE.Color(1, 1, 1)); //, 2, 20, 0.1);
+    //const x = (Math.random() - 0.5) * config.mapWidthIn3DUnits;
+    const xi = i % lc2;
+    const yi = Math.floor(i / lc2);
+    const x = (xi / (lc2 - 1) - 0.5) * config.mapWidthIn3DUnits * 2.0 * 0.75;
+    const y = 2.5;
+    //Math.random() * config.mapYScale,
+    const z = (yi / (lc2 - 1) - 0.5) * config.mapHeightIn3DUnits * 2.0 * 0.75;
+    console.log(x, y, z);
+    //const z = (Math.random() - 0.5) * config.mapHeightIn3DUnits);
+    pointLight.position.set(x, y, z);
+    setup.terrainMesh.add(pointLight);
+    //setup.scene.add(pointLight);
+  }
+
   const scene = setup.scene;
   setup.camera.lookAt(new THREE.Vector3(scene.position.x, scene.position.y - 16, scene.position.z));
+
 
   let frameCount = 0;
 
@@ -1010,6 +1118,13 @@ const main = function(texture) {
     for (let i = 0; i < setup.updaters.length; i++) {
       setup.updaters[i](frameCount);
     }
+    /*
+    for (let i = 0; i < setup.scene.children; i++) {
+      setup.scene.children[i].rotation.y += 0.1;
+    }
+    setup.terrainMesh.rotation.y += 0.01;
+    setup.terrainMeshWater.rotation.y += 0.01;
+    */
     
     if (setup.renderer.domElement.width != window.innerWidth ||
         setup.renderer.domElement.height != window.innerHeight) {
@@ -1631,7 +1746,9 @@ const mainOld = function() {
   const ambient = new THREE.AmbientLight(0xFFFFFF);
   //scene.add(ambient);
 
+  //const dirLight = new THREE.DirectionalLight(0xFFFFFF);
   const dirLight = new THREE.DirectionalLight(0xFFFFFF);
+  dirLight.intensity = 0.0;
 
   dirLight.position.set(-0.65, 1.0, -0.65);
   dirLight.lookAt(scene.position);
