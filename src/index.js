@@ -573,8 +573,8 @@ float normHeight(float water, float groundHeight) {
 }
 
 float vsum(vec4 a) {
-  //return (a.x + a.y + a.z + a.w) * 0.25;
-  return a.x;
+  return (a.x + a.y + a.z + a.w) * 0.25;
+  //return a.x;
 }
 
 #define DRAG_MULT 0.048
@@ -648,7 +648,7 @@ void main() {
     }
     //displacement.x = 0.5 * s;
     //displacement.y = 0.005 * s;
-    displacement.x = getwaves(uv * 8.0) * 4.0;
+    displacement = vec4(getwaves(uv * 8.0) * 3.0);
   }
   //displacement.x += 0.9 * displacement.x + getwaves(uv * 10.0) * 4.0;
 
@@ -682,6 +682,53 @@ void main() {
     transfer = 0.5 * (transferPerNeighbour + nbsV + velocity);
     //transfer = 0.5 * (transferPerNeighbour + 0.0 * velocity);
     //transfer = 0.25 + nbsV + velocity;
+    
+    vec4 oldDisplacement = displacement;
+
+    float oldValue = vsum(displacement);
+    if (isWater(groundHeight)) {
+      //displacement.x += displacement.y + 0.5 * avg;
+      float tl = abs(avg);
+      if (displacement.y != clamp(displacement.y, -displacement.x, tl)) {
+        //displacement.y *= 0.999;
+      }
+      displacement += (velocity.x + 0.5 * avg);
+    } else {
+      displacement += (velocity.x + 0.5 * avg);
+      //displacement.x += 0.5 * avg;
+    }
+
+    // Decay
+    // displacement.x *= 0.99999;
+    //displacement.y = displacement.x - oldValue;
+    //float oldVelocity = displacement.y;
+    //displacement.y = (displacement.y + (displacement.x - oldValue)) * 0.5 * 1.0e-3 + displacement.x - oldValue;
+    
+    velocity.x = vsum(displacement) - oldValue;
+
+    //displacement.z = displacement.y - oldVelocity;
+    //displacement.x += displacement.z;
+    //displacement.z = mix(displacement.z, displacement.y, 0.5);
+    //displacement.z *= 0.9;
+    //displacement.x += 0.01 * displacement.z;
+    // Rain
+    //displacement.x += 0.001;
+
+    if (!isWater(groundHeight)) {
+      //displacement.y = 0.0;
+    }
+
+    /*
+    if (displacement.x < 0.0) {
+      displacement.xy = vec2(0.0);
+    }
+    if (displacement.x > 1.5) {
+      displacement.x = 1.5;
+      displacement.y /= 1.1;
+    }
+    */
+
+    transfer = displacement - oldDisplacement;
   }
 
   if (waterShaderMode < 0.5 || (waterShaderMode < 4.5 && waterShaderMode > 3.5)) {
@@ -695,6 +742,11 @@ void main() {
     //velocity.xy += 0.01 * vec2(transfer.x + transfer.y, transfer.z + transfer.w);
     //velocity *= 0.9;
     //velocity.x += 0.01 * vsum(transfer);
+
+    float oldValue = vsum(displacement);
+    displacement += transfer;
+    //velocity.x = vsum(transfer) * 4.0;
+    velocity.x = vsum(displacement) - oldValue;
 
     /*
     vec4 oldDisplacement = displacement;
@@ -712,48 +764,8 @@ void main() {
     */
     //displacement += 0.1 *  velocity;
     //velocity += 0.5 * avg;
-  }
 
-  float oldValue = displacement.x;
-  if (isWater(groundHeight)) {
-    //displacement.x += displacement.y + 0.5 * avg;
-    float tl = abs(avg);
-    if (displacement.y != clamp(displacement.y, -displacement.x, tl)) {
-      //displacement.y *= 0.999;
-    }
-    displacement.x += displacement.y + 0.5 * avg;
-  } else {
-    displacement.x += displacement.y + 0.5 * avg;
-    //displacement.x += 0.5 * avg;
   }
-  // Decay
-  // displacement.x *= 0.99999;
-  //displacement.y = displacement.x - oldValue;
-  //float oldVelocity = displacement.y;
-  //displacement.y = (displacement.y + (displacement.x - oldValue)) * 0.5 * 1.0e-3 + displacement.x - oldValue;
-  displacement.y = displacement.x - oldValue;
-  //displacement.z = displacement.y - oldVelocity;
-  //displacement.x += displacement.z;
-  //displacement.z = mix(displacement.z, displacement.y, 0.5);
-  //displacement.z *= 0.9;
-  //displacement.x += 0.01 * displacement.z;
-  // Rain
-  //displacement.x += 0.001;
-
-  if (!isWater(groundHeight)) {
-    //displacement.y = 0.0;
-  }
-
-  /*
-  if (displacement.x < 0.0) {
-    displacement.xy = vec2(0.0);
-  }
-  if (displacement.x > 1.5) {
-    displacement.x = 1.5;
-    displacement.y /= 1.1;
-  }
-
-  */
   //displacement.y += avg;
   //velocity = mix(velocity, velocity + vec4(avg), 0.1);
   //velocity '= avg;
@@ -831,27 +843,28 @@ void main() {
       material.uniforms.accumTime.value -= fixedTime;
       material.uniforms.accumTime.value = Math.max(0.0, material.uniforms.accumTime.value);
       material.uniforms.texture.value = wrt2.texture;
-      material.uniforms.velocityTexture.value = wrtV.texture;
+      material.uniforms.velocityTexture.value = wrtV2.texture;
 
-      /*
+      // Render transfer
       material.uniforms.transferTexture.value = nullTexture;
       material.uniforms.waterShaderMode.value = 3.0;
       setup.renderer.setRenderTarget(setup.waterRenderTargetTransfer);
       setup.renderer.render(setup.waterQuadScene, setup.camera);
-      */
 
+      // Render displacement
+      // Depends on transfer
       material.uniforms.transferTexture.value = setup.waterRenderTargetTransfer.texture;
       material.uniforms.waterShaderMode.value = 0.0;
       setup.renderer.setRenderTarget(wrt);
       setup.renderer.render(setup.waterQuadScene, setup.camera);
 
-      /*
-      material.uniforms.texture.value = wrt.texture;
+      // Render velocities
+      // Depends on transfer
+      //material.uniforms.texture.value = wrt.texture;
       material.uniforms.velocityTexture.value = wrtV2.texture;
       material.uniforms.waterShaderMode.value = 4.0;
       setup.renderer.setRenderTarget(wrtV);
       setup.renderer.render(setup.waterQuadScene, setup.camera);
-      */
 
       material.uniforms.transferTexture.value = nullTexture;
 
