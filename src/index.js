@@ -29,10 +29,14 @@ const config = {
   mapHeightIn3DUnits: 64,
   numTilesX: 64,
   numTilesY: 95,
+  //waterWidthInPixels: 128,
+  //waterHeightInPixels: 128,
   waterWidthInPixels: 1024,
   waterHeightInPixels: 1024,
   mapDetailX: 32,
   mapDetailY: 32,
+  //mapDetailX: 4,
+  //mapDetailY: 4,
   mapYScale: 5
 };
 // Terrain has width, height and depth.
@@ -80,6 +84,11 @@ const setupRenderer = function(width, height, renderOpts) {
   if ( ! renderer.capabilities.isWebGL2 &&
      ! renderer.extensions.get( "OES_texture_float" ) ) {
     fatal("No OES_texture_float support for float textures.");
+    return;
+  }
+  if ( ! renderer.capabilities.isWebGL2 &&
+     ! renderer.extensions.get( "OES_texture_half_float" ) ) {
+    fatal("No OES_texture_float support for half float textures.");
     return;
   }
 
@@ -829,7 +838,7 @@ void main() {
       //velocity = -vec4(nbg - groundHeight) * 0.1;
     }
 
-    transfer = velocity - nbsV + 0.25 * 0.5 * delta + 0.0 * 0.25 * 0.5 * avg;
+    transfer = velocity - nbsV + 2.0 * 0.25 * 0.5 * delta + 0.0 * 0.25 * 0.5 * avg;
     transfer = min(vec4(0.0), transfer);
     if (!isWater(groundHeight)) {
       //transfer = -vec4(1.0 * max(0.0, mine - groundHeight));
@@ -872,7 +881,7 @@ void main() {
 
     float outgoing = vsum(abs(transfer));
     float incoming = vsum(abs(prevTransfer));
-    float speed = 0.25;
+    float speed = 1.0;
     float scale = 1.0;
 
     /*
@@ -977,7 +986,7 @@ void main() {
     let count = 0;
     //console.log(material.uniforms.accumTime.value);
     //while (waterFrameCount < 10000 || material.uniforms.accumTime.value >= fixedTime) {
-    while (waterFrameCount < 0 || material.uniforms.accumTime.value >= fixedTime) {
+    if (waterFrameCount < 0 || material.uniforms.accumTime.value >= fixedTime) {
       const rts = setup.waterRenderTargets;
       const wrt = rts[waterFrameCount % 2];
       const wrt2 = rts[(waterFrameCount + 1) % 2];
@@ -1055,7 +1064,8 @@ void main() {
 const main = function(texture) {
   prelude();
 
-  document.body.style = 'margin: 0px; padding: 0px; overflow: hidden;';
+  // This line causes problems on iPhone 5C.
+  //document.body.style = 'margin: 0px; padding: 0px; overflow: hidden;';
 
   let setup = setupRenderer(window.innerWidth, window.innerHeight, { maxLights: config.lightCount });
   setup.tileTexture = setDefaultTextureProperties(texture);
@@ -1109,7 +1119,6 @@ const main = function(texture) {
 
   const scene = setup.scene;
   setup.camera.lookAt(new THREE.Vector3(scene.position.x, scene.position.y - 16, scene.position.z));
-
 
   let frameCount = 0;
 
@@ -2264,6 +2273,6 @@ try {
       new THREE.TextureLoader().load('art/images/ProjectUtumno_full_4096.png', texture => main(texture));
   }
 } catch (error) {
-  throw(error);
-  document.body.innerHTML = '<pre>' + error.stack + '</pre>';
+  //document.body.innerHTML = '<pre>' + error.toString() + error.stack + '</pre>';
+  document.body.innerHTML = '<pre>' + error + '</pre>';
 }
