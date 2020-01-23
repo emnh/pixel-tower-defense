@@ -106,7 +106,7 @@ const setupRenderer = function(width, height, renderOpts) {
   if (abs(transformed.y) <= 1.0e-6) {
     vec4 dtex = texture2D(displacementMap, dmuv);
     //float disp = abs(dtex.x + dtex.y + dtex.z + dtex.w) * displacementScale;
-    float disp = abs(dtex.x) * displacementScale;
+    float disp = 0.25 * (dtex.x + dtex.y + dtex.z + dtex.w) * displacementScale;
     transformed.y += disp;
   }
 #endif
@@ -648,7 +648,8 @@ void main() {
     }
     //displacement.x = 0.5 * s;
     //displacement.y = 0.005 * s;
-    displacement = vec4(getwaves(uv * 8.0) * 3.0);
+    displacement = vec4(getwaves(uv * 8.0) * 5.0);
+    velocity = vec4(0.0);
   }
   //displacement.x += 0.9 * displacement.x + getwaves(uv * 10.0) * 4.0;
 
@@ -704,7 +705,7 @@ void main() {
     //float oldVelocity = displacement.y;
     //displacement.y = (displacement.y + (displacement.x - oldValue)) * 0.5 * 1.0e-3 + displacement.x - oldValue;
     
-    velocity.x = vsum(displacement) - oldValue;
+    //velocity.x = vsum(displacement) - oldValue;
 
     //displacement.z = displacement.y - oldVelocity;
     //displacement.x += displacement.z;
@@ -727,8 +728,31 @@ void main() {
       displacement.y /= 1.1;
     }
     */
+    
+    //transfer = vsum(velocity) + 0.25 * 0.5 * (nbs - vec4(mine));
+    //transfer = vec4(velocity.x, velocity.x, velocity.z, velocity.z) + 0.25 * 0.5 * (nbs - vec4(mine));
+    //transfer = velocity + nbsV + 0.25 * 0.5 * (nbs - vec4(mine));
+    //transfer = velocity - nbsV + 0.25 * 0.5 * (nbs - vec4(mine)) + 0.1 * avg;
+    transfer = velocity - nbsV + 0.25 * 0.5 * (nbs - vec4(mine)) + 0.0 * 0.25 * 0.5 * avg;
+    //transfer = max(vec4(0.0), transfer);
+    transfer = min(vec4(0.0), transfer);
+    float l2 = vsum(abs(transfer) * mine) * 4.0 / 0.25;
+    if (l2 > 0.0) {
+      //transfer *= min(1.0, 1.0 / l2);
+    } else {
+      //transfer = vec4(0.0);
+    }
+    /*
+    if (mod(waterFrameCount, 2.0) < 0.5) { 
+      transfer = max(vec4(0.0), transfer);
+    } else {
+      transfer = min(vec4(0.0), transfer);
+    }
+    */
+    //transfer = -transfer;
+    //transfer *= 0.05;
 
-    transfer = displacement - oldDisplacement;
+    //transfer = displacement - oldDisplacement;
   }
 
   if (waterShaderMode < 0.5 || (waterShaderMode < 4.5 && waterShaderMode > 3.5)) {
@@ -744,9 +768,37 @@ void main() {
     //velocity.x += 0.01 * vsum(transfer);
 
     float oldValue = vsum(displacement);
-    displacement += transfer;
+    displacement += vsum(transfer);
+    displacement -= vsum(prevTransfer);
     //velocity.x = vsum(transfer) * 4.0;
-    velocity.x = vsum(displacement) - oldValue;
+    //velocity = vec4(vsum(displacement) - oldValue);
+    //vec4 diff = displacement - oldValue;
+    vec4 diff = transfer - prevTransfer;
+    //velocity.x = 0.5 * (diff.x + diff.y);
+    //velocity.y = 0.5 * (diff.w + diff.z);
+    
+    //vec2 fv2 = vec2(0.5);
+    //velocity.xy = fv2 * (diff.x + diff.y);
+    //velocity.zw = fv2 * (diff.w + diff.z);
+    //vec2 fv2 = vec2(0.5);
+    //velocity.xy = fv2 * (diff.x - diff.y);
+    //velocity.zw = fv2 * (diff.w - diff.z);
+    //velocity += 0.1 * (transfer - prevTransfer);
+    velocity = 0.5 * (transfer - prevTransfer);
+    //velocity.xy = mix(velocity.xy, velocity.yx, 0.1);
+    //velocity.zw = mix(velocity.zw, velocity.wz, 0.1);
+    //velocity *= 0.95;
+    //velocity += 1.0e-2 * (transfer - prevTransfer);
+    //velocity *= 0.75;
+    //velocity = mix(velocity, vec4(vsum(displacement) - oldValue), 1.0);
+    //velocity *= 0.5;
+    //velocity += 1.0e-2 * (transfer - prevTransfer);
+    //velocity = mix(velocity, vec4(vsum(velocity)), 0.5);
+    //velocity = 0.25 * vec4(vsum(transfer - prevTransfer));
+
+    //velocity.x = -(diff.x - diff.y);
+    //velocity.y = -(diff.w - diff.z);
+    //velocity = transfer - prevTransfer;
 
     /*
     vec4 oldDisplacement = displacement;
@@ -872,6 +924,10 @@ void main() {
       material.uniforms.waterFrameCount.value = waterFrameCount;
       count++;
     }
+
+    const rts = setup.waterRenderTargets;
+    const wrt = rts[(waterFrameCount + 2 - 1) % 2];
+    material.uniforms.texture.value = wrt.texture;
     material.uniforms.waterShaderMode.value = 1.0;
     setup.renderer.setRenderTarget(setup.waterNormalsRenderTarget);
     setup.renderer.render(setup.waterQuadScene, setup.camera);
@@ -881,8 +937,6 @@ void main() {
     setup.renderer.render(setup.waterQuadScene, setup.camera);
 
     // TODO: maybe relocate this line
-    const rts = setup.waterRenderTargets;
-    const wrt = rts[waterFrameCount % 2];
     setup.terrainMeshWater.material.displacementMap = wrt.texture;
     setup.terrainMeshWater.material.map = setup.waterNormalsRenderTarget.texture;
   });
