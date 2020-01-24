@@ -1112,6 +1112,8 @@ const setupSplash = function(setup) {
 
     const video = document.createElement('video');
     video.style = "display: none;";
+    video.preload = 'auto';
+    video.autoload = true;
     video.autoplay = true;
     video.playbackRate = 2.0;
     video.loop = true;
