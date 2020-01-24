@@ -1061,6 +1061,92 @@ void main() {
   return setup;
 };
 
+const setupSplash = function(setup) {
+  const width = 20;
+  const height = 20;
+  const quad = new THREE.PlaneGeometry(width, height);
+  // TODO: update when camera moves
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      map: { value: null }
+    },
+    transparent: true,
+    vertexShader: `
+  varying vec2 vUV;
+  void main() {
+    vUV = uv;
+    gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position.xy, 0.0, 1.0);
+  }
+`,
+    fragmentShader: `
+  varying vec2 vUV;
+  uniform sampler2D map;
+  void main() {
+    vec3 color = texture2D(map, vUV).rgb;
+    /*
+    if (color.g > 0.1 && color.r < 0.1 && color.b < 0.1) {
+      discard;
+    }
+    color.g *= 1.0;
+    color.b *= 2.0;
+    */
+
+    vec3 gcolor = vec3(0.0, 1.0, 0.0);
+    float gray = (color.r + color.g + color.b) / 3.0;
+    vec3 tcolor = vec3(gray, 1.5 * gray, 2.0 * gray);
+    if (length(color) < 0.3) {
+      discard;
+    }
+    gl_FragColor = vec4(tcolor, (0.9 - dot(gcolor, color) / (length(color) + 0.05)) * 3.0);
+  }
+`
+  });
+  const startTime = performance.now();
+  const loadedVideos = [];
+  const mclones = [];
+  const count = 16;
+  for (let i = 0; i < count; i++) {
+    const mclone = material.clone();
+    const mesh = new THREE.Mesh(quad, mclone);
+    mclones.push(mclone);
+
+    const video = document.createElement('video');
+    video.style = "display: none;";
+    video.autoplay = true;
+    video.playbackRate = 2.0;
+    video.loop = true;
+    // Video from https://www.youtube.com/watch?v=faz7i4lrFVI
+    video.src = 'art/video/splash8.mp4';
+    video.onloadstart = function(video) {
+      return function() {
+        loadedVideos.push(video);
+        if (loadedVideos.length == count) {
+          for (let i = 0; i < count; i++) {
+            const video2 = loadedVideos[i];
+            video2.currentTime = (15.0 / 4.0 - i / 4.0) * 0.5;
+
+            const texture = new THREE.VideoTexture(video2);
+
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            texture.format = THREE.RGBFormat;
+
+            mclones[i].uniforms.map.value = texture;
+          }
+        }
+      };
+    }(video);
+    document.body.appendChild(video);
+
+    mesh.lookAt(setup.camera.position);
+    setup.terrainMeshWater.add(mesh);
+    mesh.position.set(0, height / 2 + 1, (i - 8) * 3);
+  }
+  //mesh.scale.set(1.0, 1.0, 1.0);
+
+  return setup;
+};
+
 const main = function(texture) {
   prelude();
 
@@ -1084,15 +1170,17 @@ const main = function(texture) {
   // Set yScale equal to xScale so that the cubes are cubes and not rectangular
   // cuboids, i.e. all dimensions are equal, given that width (xScale) and
   // height (zScale) are same.
+  
+  setup.camera.position.set(config.cameraPosition.x, config.cameraPosition.y, config.cameraPosition.z);
   setup = setupWater(setup);
   setup = addCubes(setup, setup.scene, config.mapYScale, config.mapWidthIn3DUnits / (config.mapWidthInTiles - 1));
   setup = setupLighting(setup, config.mapWidthInPixels, config.mapHeightInPixels);
+  setup = setupSplash(setup);
 
   //setup.scene.add(new THREE.AmbientLight(0xFFFFFFF));
   const dirLight = new THREE.DirectionalLight(0xFFFFFF);
   //dirLight.position.set(new THREE.Vector3(0.65, 1.0, 0.65));
   //dirLight.position.set(-0.65, 1.0, -0.65);
-  setup.camera.position.set(config.cameraPosition.x, config.cameraPosition.y, config.cameraPosition.z);
   dirLight.position.set(setup.camera.position.x, setup.camera.position.y, setup.camera.position.z);
   dirLight.lookAt(setup.scene.position);
   //dirLight.intensity = 2.0;
