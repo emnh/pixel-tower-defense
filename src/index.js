@@ -31,10 +31,12 @@ const config = {
   numTilesY: 95,
   //waterWidthInPixels: 128,
   //waterHeightInPixels: 128,
+  //waterWidthInPixels: 1024,
+  //waterHeightInPixels: 1024,
   waterWidthInPixels: 1024,
   waterHeightInPixels: 1024,
-  mapDetailX: 32,
-  mapDetailY: 32,
+  mapDetailX: 8,
+  mapDetailY: 8,
   //mapDetailX: 4,
   //mapDetailY: 4,
   mapYScale: 5
@@ -641,6 +643,8 @@ uniform float deltaTime;
 uniform float waterShaderMode;
 uniform float mapYScale;
 
+uniform float splashTime;
+
 float rand(vec2 co){
   return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
 }
@@ -682,7 +686,7 @@ vec4 gaussian(sampler2D texture) {
 
 bool isWater(float height) {
   // TODO: uniform
-  bool isWater = height <= 0.1 * mapYScale;
+  bool isWater = height <= 0.01 * mapYScale;
   return isWater;
 }
 
@@ -900,6 +904,20 @@ void main() {
     //displacement.x += 0.000001;
     //displacement.x = max(displacement.x, -mapHeight);
     //displacement.x = max(displacement.x, 0.0);
+    
+    //float wfcMod = mod(waterFrameCount, 100.0);
+    if (isWater(groundHeight) && splashTime > 1.0e-6) {
+      float i = 15.0 / 4.0 - floor(uv.x * 16.0) / 4.0 * 0.5;
+      float splashTime2 = mod(splashTime + i, 4.0);
+      vec2 uvSplash = (vec2(uv.y, fract(uv.x * 16.0)) - vec2(0.5)) / vec2(1.0, 16.0);
+      //float d = distance(uvSplash, vec2(0.5));
+      float d = length(uvSplash);
+      if (d < 0.001 && splashTime2 > 0.5 && splashTime2 < 1.0) {
+        displacement.x = mapYScale * (splashTime2 + 0.5);
+      } else if (d < 0.01 && splashTime2 >= 2.0 && splashTime2 < 3.0) {
+        displacement.x = 0.0;
+      }
+    }
 
     vec4 diff = transfer - prevTransfer;
     velocity = 0.5 * (transfer - prevTransfer);
@@ -1097,7 +1115,9 @@ const setupSplash = function(setup) {
     if (length(color) < 0.3) {
       discard;
     }
-    gl_FragColor = vec4(tcolor, (0.9 - dot(gcolor, color) / (length(color) + 0.05)) * 3.0);
+    //float a = min(1.0, (1.0 - vUV.y - 0.5) * 1.0);
+    float a = vUV.y < 0.25 ? vUV.y * 4.0 : 1.0;
+    gl_FragColor = vec4(tcolor * a, (0.9 - dot(gcolor, color) / (length(color) + 0.05)) * 3.0 * a);
   }
 `
   });
@@ -1105,6 +1125,9 @@ const setupSplash = function(setup) {
   const loadedVideos = [];
   const mclones = [];
   const count = 16;
+  setup.waterQuadMaterial.uniforms.splashTime = {
+    value: 0.0
+  };
   for (let i = 0; i < count; i++) {
     const mclone = material.clone();
     const mesh = new THREE.Mesh(quad, mclone);
@@ -1126,6 +1149,7 @@ const setupSplash = function(setup) {
           for (let i = 0; i < count; i++) {
             const video2 = loadedVideos[i];
             video2.currentTime = (15.0 / 4.0 - i / 4.0) * 0.5;
+            //video2.play();
 
             const texture = new THREE.VideoTexture(video2);
 
@@ -1134,6 +1158,12 @@ const setupSplash = function(setup) {
             texture.format = THREE.RGBFormat;
 
             mclones[i].uniforms.map.value = texture;
+            // TODO: timing for each splash, not just last
+            if (i == 0) {
+              setup.updaters.push(function(frameCount) {
+                setup.waterQuadMaterial.uniforms.splashTime.value = video2.currentTime;
+              });
+            }
           }
         }
       };
@@ -1142,7 +1172,7 @@ const setupSplash = function(setup) {
 
     mesh.lookAt(setup.camera.position);
     setup.terrainMeshWater.add(mesh);
-    mesh.position.set(0, height / 2 + 1, (i - 8) * 3);
+    mesh.position.set(0, height / 2 + 1, (i - Math.floor(count / 2)) * 3);
   }
   //mesh.scale.set(1.0, 1.0, 1.0);
 
@@ -1204,7 +1234,6 @@ const main = function(texture) {
     //const z = (Math.random() - 0.5) * config.mapHeightIn3DUnits);
     pointLight.position.set(x, y, z);
     setup.terrainMesh.add(pointLight);
-    //setup.scene.add(pointLight);
   }
 
   const scene = setup.scene;
