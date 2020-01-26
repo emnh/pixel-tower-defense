@@ -659,7 +659,7 @@ const setupWater = function(setup) {
     //console.log(material.uniforms.accumTime.value);
     //while (waterFrameCount < 10000 || material.uniforms.accumTime.value >= fixedTime) {
 
-    if (waterFrameCount < 0 || material.uniforms.accumTime.value >= fixedTime) {
+    if (waterFrameCount <= 0 || material.uniforms.accumTime.value >= fixedTime) {
       const rts = setup.waterRenderTargets;
       const wrt = rts[waterFrameCount % 2];
       const wrt2 = rts[(waterFrameCount + 1) % 2];
@@ -669,14 +669,15 @@ const setupWater = function(setup) {
       //setup.renderer.setSize(wrt.width, wrt.height);
 
       if (waterFrameCount === 0) {
-        setup.renderer.setRenderTarget(wrt2);
+        material.uniforms.texture.value = wrt2.texture;
+        setup.renderer.setRenderTarget(wrt);
         setup.renderer.render(setup.waterInitQuadScene, setup.camera);
       }
 
       material.uniforms.accumTime.value -= fixedTime;
       material.uniforms.accumTime.value = Math.max(0.0, material.uniforms.accumTime.value);
-      material.uniforms.texture.value = wrt2.texture;
-      material.uniforms.velocityTexture.value = wrtV2.texture;
+      material.uniforms.texture.value = wrt.texture;
+      material.uniforms.velocityTexture.value = wrtV.texture;
 
       // Render transfer
       material.uniforms.transferTexture.value = nullTexture;
@@ -684,20 +685,22 @@ const setupWater = function(setup) {
       setup.renderer.setRenderTarget(setup.waterRenderTargetTransfer);
       setup.renderer.render(setup.waterQuadScene, setup.camera);
 
+
       // Render displacement
       // Depends on transfer
       material.uniforms.transferTexture.value = setup.waterRenderTargetTransfer.texture;
       material.uniforms.waterShaderMode.value = 0.0;
-      setup.renderer.setRenderTarget(wrt);
+      setup.renderer.setRenderTarget(wrt2);
       setup.renderer.render(setup.waterQuadScene, setup.camera);
 
       // Render velocities
       // Depends on transfer
       //material.uniforms.texture.value = wrt.texture;
-      material.uniforms.velocityTexture.value = wrtV2.texture;
+      material.uniforms.velocityTexture.value = wrtV.texture;
       material.uniforms.waterShaderMode.value = 4.0;
-      setup.renderer.setRenderTarget(wrtV);
+      setup.renderer.setRenderTarget(wrtV2);
       setup.renderer.render(setup.waterQuadScene, setup.camera);
+
 
       material.uniforms.transferTexture.value = nullTexture;
 
@@ -712,12 +715,10 @@ const setupWater = function(setup) {
 
     // Gaussian blur of displacement
     // Depends on displacement
-    /*
-    material.uniforms.texture.value = wrt2.texture;
+    material.uniforms.texture.value = wrt.texture;
     material.uniforms.waterShaderMode.value = 5.0;
-    setup.renderer.setRenderTarget(wrt);
+    setup.renderer.setRenderTarget(wrt2);
     setup.renderer.render(setup.waterQuadScene, setup.camera);
-    */
 
     // Last render target was wrt, so with waterFrameCount++ it will be wrt2
     const lastRenderTarget = wrt2;
@@ -894,7 +895,7 @@ const main = function(texture) {
     const y = 2.5;
     //Math.random() * config.mapYScale,
     const z = (yi / (lc2 - 1) - 0.5) * config.mapHeightIn3DUnits * 2.0 * 0.75;
-    console.log(x, y, z);
+    //console.log(x, y, z);
     //const z = (Math.random() - 0.5) * config.mapHeightIn3DUnits);
     pointLight.position.set(x, y, z);
     setup.terrainMesh.add(pointLight);

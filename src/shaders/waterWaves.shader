@@ -1,6 +1,38 @@
+precision highp float;
+
+//const float maxTransfer = 1.0;
+//const float invMaxTransfer = 1.0 / maxTransfer;
+const float transferScale = 1.0;
+const float velocityScale = 1.0;
+const float byteSize = 255.0;
+const float eps = 1.0e-20;
+const float velocityOffset = 128.0;
+const float signBitCount = 1.0;
+
+/*
+const float exponentBitCount = 3.0;
+const float mantissaBitCount = 4.0;
+// pow(2.0, mantissaBitCount)
+const float mantissaSize = 16.0;
+*/
+
+const float exponentBitCount = 5.0;
+const float mantissaBitCount = 2.0;
+// pow(2.0, mantissaBitCount)
+const float mantissaSize = 3.0;
+
+const float encBits = 64.0;
+
+bool isInteger(float v) {
+    return fract(v + eps) != fract(v - eps);
+}
 
 float rand(vec2 co){
     return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+}
+
+vec4 round(vec4 v) {
+    return floor(v + 0.5);
 }
 
 float normpdf(in float x, in float sigma) {
@@ -94,9 +126,11 @@ float getwaves(vec2 position){
 
 float checkDelta(float delta, float waterMine, float waterNB) {
     if (delta > 0.0) {
+        //delta = min(delta, max(0.0, waterNB));
         delta = min(delta, max(0.0, waterMine));
     } else {
-        delta = max(delta, -max(0.0, waterNB));
+        //delta = -min(-delta, max(0.0, waterMine));
+        delta = max(delta, max(0.0, -waterNB));
     }
     return delta;
 }
@@ -105,14 +139,141 @@ float posWater(float x) {
     return max(0.0, x);
 }
 
+// Convert a byte from 0.0 to 255.0 to floating point between -1.0 and 1.0
+float byteToFloat(float v) {
+    v = clamp(floor(v), 0.0, encBits - 1.0);
+    //float sgn = sign(v - 127.0) < 0.0 ? -1.0 : 1.0;
+    float sgn = sign(v - encBits * 0.5);
+    /*
+    if (v - encBits * 0.5 <= eps) {
+        sgn = 0.0;
+    }
+    */
+    v = mod(v, encBits * 0.5);
+    //float msize = pow(2.0, mantissaBitCount);
+    float exponent = floor(v / mantissaSize);
+    float mantissa = mod(v, mantissaSize) + 2.0;
+    //float exponent = 1.0 + v;
+    //float mantissa = 1.0;
+    return sgn * pow(0.5, exponent) * mantissa;
+}
+
+// Convert a float between -1 and 1 to a minifloat
+float floatToByte(float v) {
+    //float sign = max(sign(v), 0.0);
+    //float exponent =
+    float mind = 1.0e20;
+    float mini = 0.0;
+    for (float i = 0.0; i < encBits; i += 1.0) {
+        float n = byteToFloat(i);
+        float d = abs(v - n);
+        if (d < mind) {
+            mind = d;
+            mini = i;
+        }
+    }
+    return mini;
+}
+
 vec4 EncodeFloatRGBA(float v) {
-    vec4 enc = vec4(1.0, 255.0, 65025.0, 16581375.0) * v;
-    enc = fract(enc);
-    enc -= enc.yzww * vec4(1.0/255.0,1.0/255.0,1.0/255.0,0.0);
+    vec4 enc = vec4(0.0);
+    enc.x = mod(v, encBits);
+    v = floor(v / encBits);
+    enc.y = mod(v, encBits);
+    v = floor(v / encBits);
+    enc.z = mod(v, encBits);
+    v = floor(v / encBits);
+    enc.w = mod(v, encBits);
+    enc = vec4(byteToFloat(enc.x), byteToFloat(enc.y), byteToFloat(enc.z), byteToFloat(enc.w));
     return enc;
 }
 
 float DecodeFloatRGBA(vec4 rgba) {
+    rgba = vec4(floatToByte(rgba.x), floatToByte(rgba.y), floatToByte(rgba.z), floatToByte(rgba.w));
+    float e = encBits;
+    return rgba.x + rgba.y * e + rgba.z * e + rgba.w * e * e * e;
+}
+
+vec4 EncodeFloatRGBA2(float v) {
+    //vec4 enc = vec4(1.0, 255.0, 65025.0, 16581375.0) * v;
+    //enc = fract(enc);
+    //enc -= enc.yzww * vec4(1.0/255.0,1.0/255.0,1.0/255.0,0.0);
+    float sgn = max(sign(v), 0.0);
+    v = abs(v);
+    vec4 enc = vec4(0.0); //vec4(rgba.x, rgba.y % 256.0, )
+
+    /*
+    if (isInteger(v)) {
+        //enc.w = floor(log2(v));
+        //float p = 1.0;
+        float v2 = v;
+        for (float w = 128.0; w < 256.0; w += 1.0) {
+            //float v2 = v / pow(2.0, w - 127.0);
+            //if (fract(v2) <= eps) {
+            //float p = pow(2.0, w - 127.0);
+            v2 *= 0.5;
+            //if (mod(v, p) <= eps) {
+            if (!isInteger(v2)) {
+                v = v2 * 2.0;
+                enc.w = w;
+                break;
+            }
+        }
+    } else {
+        //float p = 1.0;
+        float v2 = v;
+        for (float w = 127.0; w >= 0.0; w -= 1.0) {
+            //float v2 = v / pow(2.0, w - 127.0);
+            //if (fract(v2) <= eps) {
+            //float p = pow(2.0, w - 127.0);
+            v2 *= 2.0;
+            //if (mod(v, p) <= eps) {
+            if (isInteger(v2)) {
+                v = v2;
+                enc.w = w;
+                break;
+            }
+        }
+    }*/
+
+    //enc.w = 128.0;
+    enc.w = floor(log2(v) + 0.5) * 2.0;
+    v = floor(v / pow(2.0, enc.w));
+    enc.x = mod(v, 256.0);
+    v = floor(v / 256.0);
+    enc.y = mod(v, 256.0);
+    v = floor(v / 256.0);
+    enc.z = mod(v, 128.0) + sgn * 128.0;
+    //enc = mod(enc, 256.0);
+    enc = vec4(byteToFloat(enc.x), byteToFloat(enc.y), byteToFloat(enc.z), byteToFloat(enc.w));
+    return enc;
+}
+
+float DecodeFloatRGBA2(vec4 rgba) {
+    //rgba = clamp(floor(rgba * 255.0) / 255.0, 0.0, 254.0 / 255.0);
+    rgba = vec4(floatToByte(rgba.x), floatToByte(rgba.y), floatToByte(rgba.z), floatToByte(rgba.w));
+    float sgn = sign(rgba.z - 127.0);
+    if (sgn <= eps) {
+        sgn = -1.0;
+    }
+    rgba.z = mod(rgba.z, 128.0);
+    return sgn * (rgba.x + rgba.y * 256.0 + rgba.z * 256.0 * 256.0) * pow(2.0, floor(rgba.w / 2.0));
+    //return sgn * (rgba.x + rgba.y * 256.0 + rgba.z * 256.0 * 256.0) * pow(2.0, rgba.w - 127.0);
+    //return sgn * (rgba.x + rgba.y * 256.0 + rgba.z * 256.0 * 256.0) * pow(2.0, floor(rgba.w * 128.0 / 255.0));
+    //return dot( rgba, vec4(1.0, 1.0/255.0, 1.0/65025.0, 1.0/16581375.0) );
+}
+
+vec4 EncodeFloatRGBANeg(float v) {
+    vec4 enc = vec4(1.0, 255.0, 65025.0, 16581375.0) * v;
+    enc = fract(enc);
+    enc -= enc.yzww * vec4(1.0/255.0,1.0/255.0,1.0/255.0,0.0);
+    enc = enc * 2.0 - 1.0;
+    return enc;
+}
+
+float DecodeFloatRGBANeg(vec4 rgba) {
+    rgba = (rgba + 1.0) / 2.0;
+    rgba = clamp(floor(rgba * 255.0) / 255.0, 0.0, 254.0 / 255.0);
     return dot( rgba, vec4(1.0, 1.0/255.0, 1.0/65025.0, 1.0/16581375.0) );
 }
 
@@ -120,12 +281,138 @@ float getGroundHeight(vec4 v) {
     return v.y;
 }
 
+vec4 getTransfer(vec4 displacement) {
+    return EncodeFloatRGBA(displacement.z) * transferScale;
+    /*
+    vec4 v1 = EncodeFloatRGBA(displacement.z);
+    vec4 v = vec4(1.0) / v1;
+    v = v - 1.0;
+    //v = log(v);
+    v *= vec4(transferScale);
+    // TODO: optimize
+    if (v1.x <= eps) {
+        v.x = 0.0;
+    }
+    if (v1.y <= eps) {
+        v.y = 0.0;
+    }
+    if (v1.z <= eps) {
+        v.z = 0.0;
+    }
+    if (v1.w <= eps) {
+        v.w = 0.0;
+    }
+    return v;
+    //return (transferScale / max(abs(EncodeFloatRGBA(displacement.z)), eps) - 1.0); // - EncodeFloatRGBA(displacement.w) * maxTransfer / byteSize;
+    */
+}
+
+float setTransfer(vec4 transfer) {
+    return DecodeFloatRGBA(transfer / transferScale);
+    /*
+    vec4 transferNorm = transfer;
+    transferNorm = max(vec4(0.0), transferNorm);
+    transferNorm /= vec4(transferScale);
+    //transferNorm = exp(transferNorm);
+    transferNorm = 1.0 + transferNorm;
+    transferNorm = vec4(1.0) / transferNorm;
+    //transferNorm = 1.0 / (1.0 + abs(transferNorm) / transferScale);
+    // TODO: optimize
+    if (transfer.x <= eps) {
+        transferNorm.x = 0.0;
+    }
+    if (transfer.y <= eps) {
+        transferNorm.y = 0.0;
+    }
+    if (transfer.z <= eps) {
+        transferNorm.z = 0.0;
+    }
+    if (transfer.w <= eps) {
+        transferNorm.w = 0.0;
+    }
+    return DecodeFloatRGBA(transferNorm);
+    */
+}
+
+vec4 getVelocity(vec4 displacement) {
+    //return vec4(0.0);
+    return EncodeFloatRGBA(displacement.w / velocityScale);
+    //return EncodeFloatRGBANeg(displacement.w / velocityScale);
+    /*
+    vec4 v1 = EncodeFloatRGBA(displacement.w);
+    vec4 v = vec4(1.0) / v1;
+    v = v - 1.0;
+    v *= vec4(velocityScale);
+    v = v - velocityOffset;
+    if (v1.x <= eps) {
+        v.x = 0.0;
+    }
+    if (v1.y <= eps) {
+        v.y = 0.0;
+    }
+    if (v1.z <= eps) {
+        v.z = 0.0;
+    }
+    if (v1.w <= eps) {
+        v.w = 0.0;
+    }
+    return v;
+    */
+    //vec4 v = velocityScale / max(abs(EncodeFloatRGBA(displacement.w)), eps) - 1.0;
+    //return (v - vec4(velocityOffset));
+}
+
+float setVelocity(vec4 velocity) {
+    return DecodeFloatRGBA(velocity) * velocityScale;
+    //return DecodeFloatRGBANeg(velocity) * velocityScale;
+    /*
+    vec4 velocityNorm = velocity + velocityOffset;
+    velocityNorm = max(vec4(0.0), velocityNorm);
+    velocityNorm /= vec4(velocityScale);
+    velocityNorm = 1.0 + velocityNorm;
+    velocityNorm = vec4(1.0) / velocityNorm;
+    //vec4 velocityNorm = max(vec4(0.0), velocity + velocityOffset);
+    //velocityNorm = 1.0 / (1.0 + abs(velocityNorm) / velocityScale);
+    // TODO: optimize
+    if (velocity.x <= eps) {
+        velocityNorm.x = 0.0;
+    }
+    if (velocity.y <= eps) {
+        velocityNorm.y = 0.0;
+    }
+    if (velocity.z <= eps) {
+        velocityNorm.z = 0.0;
+    }
+    if (velocity.w <= eps) {
+        velocityNorm.w = 0.0;
+    }
+    return DecodeFloatRGBA(velocityNorm);
+    */
+}
+
+
 void main() {
+    //Packing
+    /*
+    float a = 0.45;
+    float b = 0.55;
+    int aScaled = a * 0xFFFF;
+    int bScaled = b * 0xFFFF;
+    int abPacked = (aScaled << 16) | (bScaled & 0xFFFF);
+    float finalFloat = asfloat(abPacked);
+
+    //Unpacking
+    float inputFloat = finalFloat;
+    int uintInput = asuint(inputFloat);
+    float aUnpacked = (uintInput >> 16) / 65535.0f;
+    float bUnpacked = (uintInput & 0xFFFF) / 65535.0f;
+    */
+
     vec2 uv = gl_FragCoord.xy / resolution.xy;
 
     vec4 displacement = texture2D(texture, uv);
     float groundHeight = getGroundHeight(displacement);
-    vec4 velocity = texture2D(velocityTexture, uv);
+    //vec4 velocity = texture2D(velocityTexture, uv);
 
     /*
     nbg.x = getGroundHeight(uv + vec2(-1.0, 0.0) / resolution.xy);
@@ -154,30 +441,31 @@ void main() {
     float mine = groundHeight + getDisplacement(displacement);
     float avg = 0.25 * ((nbs.x - mine) + (nbs.y - mine) + (nbs.z - mine) + (nbs.w - mine));
 
+
     vec4 nbsV = vec4(0.0);
     nbsV.x = texture2D(velocityTexture, uv + vec2(-1.0, 0.0) / resolution.xy).y;
     nbsV.y = texture2D(velocityTexture, uv + vec2(1.0, 0.0) / resolution.xy).x;
     nbsV.z = texture2D(velocityTexture, uv + vec2(0.0, -1.0) / resolution.xy).w;
     nbsV.w = texture2D(velocityTexture, uv + vec2(0.0, 1.0) / resolution.xy).z;
 
+
     //if (mod(waterFrameCount, 1000.0) == 0.0) {
-    float fac = 10.0;
     if (waterFrameCount < 0.5) {
         //displacement.y = (vec4(sin(fac *  6.28 * uv.x) + sin(fac * 6.28 * uv.y) + 0.0) * 0.1).x; // * vec4(0.000125);
         // velocity = vec4(0.0);
+        /*
         displacement = vec4(0.0);
-        float b = 2.0;
-        float s = 0.0;
-        for (float p = 1.0; p <= 10.0; p++) {
-            s += rand(floor(uv * pow(b, p))) / p;
-        }
+        displacement.z = DecodeFloatRGBA(vec4(0.0));
+        displacement.w = DecodeFloatRGBA(vec4(0.0));
+        */
+        displacement = vec4(0.0);
         if (isWater(groundHeight)) {
             //displacement.x = 0.5 * s;
             //displacement.y = 0.005 * s;
             displacement.x = (getwaves(uv * 8.0) * 5.0) - 1.5 - groundHeight;
             displacement.x = max(0.0, displacement.x);
         }
-        velocity = vec4(0.0);
+        //velocity = vec4(0.0);
     }
     //displacement.x += 0.9 * displacement.x + getwaves(uv * 10.0) * 4.0;
 
@@ -194,64 +482,35 @@ void main() {
 
     //vec4 transfer = 0.1 * vec4(avg.xy * displacement.x, avg.zw * displacement.z);
 
-    vec4 transfer = vec4(0.0);
-    if (waterShaderMode > 2.5 && waterShaderMode < 3.5) {
-        // That's the height difference (ground + water, neighbour ground + water)
-        vec4 delta = (nbg + nbs) - vec4(mine);
+    vec4 oldTransfer = vec4(0.0);
+    //if (waterShaderMode < 0.5 || (waterShaderMode < 4.5 && waterShaderMode > 3.5)) {
 
-        // Now make sure the difference is not greater than available water
-        checkDelta(delta.x, mine - groundHeight, nbs.x);
-        checkDelta(delta.y, mine - groundHeight, nbs.y);
-        checkDelta(delta.z, mine - groundHeight, nbs.z);
-        checkDelta(delta.w, mine - groundHeight, nbs.w);
-
-        if (!isWater(groundHeight)) {
-            //velocity = -vec4(nbg - groundHeight) * 0.1;
-        }
-
-        transfer = velocity - nbsV + 2.0 * 0.25 * 0.5 * delta + 0.0 * 0.25 * 0.5 * avg;
-        transfer = min(vec4(0.0), transfer);
-        if (!isWater(groundHeight)) {
-            //transfer = -vec4(1.0 * max(0.0, mine - groundHeight));
-            //transfer = 0.0 * velocity - 0.0 * nbsV + 0.25 * 0.5 * delta + 0.0 * 0.25 * 0.5 * avg;
-            //transfer = min(vec4(0.0), transfer);
-        }
-        if (displacement.x <= 0.0) {
-            transfer = vec4(0.0);
-        }
+        vec4 oldNBTransfer = vec4(0.0);
+        oldNBTransfer.x = texture2D(transferTexture, uv + vec2(-1.0, 0.0) / resolution.xy).y;
+        oldNBTransfer.y = texture2D(transferTexture, uv + vec2(1.0, 0.0) / resolution.xy).x;
+        oldNBTransfer.z = texture2D(transferTexture, uv + vec2(0.0, -1.0) / resolution.xy).w;
+        oldNBTransfer.w = texture2D(transferTexture, uv + vec2(0.0, 1.0) / resolution.xy).z;
+        oldTransfer = texture2D(transferTexture, uv);
 
         /*
-        float c = 0.1 * mapYScale;
-        //vec4 nbDiff = -sign(nbg - groundHeight - 0.01 / mapHeight);
-        //transfer = min(vec4(0.0), transfer * nbDiff);
-        // transfer should be 0 if nbDiff is 1
-        //float water = groundHeight;
-        float water = mine;
-        if (nbg.x - water > c) {
-          transfer.x = 0.0;
-        }
-        if (nbg.y - water > c) {
-          transfer.y = 0.0;
-        }
-        if (nbg.z - water > c) {
-          transfer.z = 0.0;
-        }
-        if (nbg.w - water > c) {
-          transfer.w = 0.0;
-        }
-        */
-    }
-
-    if (waterShaderMode < 0.5 || (waterShaderMode < 4.5 && waterShaderMode > 3.5)) {
+        transfer = getTransfer(displacement);
         vec4 prevTransfer = vec4(0.0);
-        prevTransfer.x = texture2D(transferTexture, uv + vec2(-1.0, 0.0) / resolution.xy).y;
-        prevTransfer.y = texture2D(transferTexture, uv + vec2(1.0, 0.0) / resolution.xy).x;
-        prevTransfer.z = texture2D(transferTexture, uv + vec2(0.0, -1.0) / resolution.xy).w;
-        prevTransfer.w = texture2D(transferTexture, uv + vec2(0.0, 1.0) / resolution.xy).z;
-        transfer = texture2D(transferTexture, uv);
+        prevTransfer.x = getTransfer(nbX).y;
+        prevTransfer.y = getTransfer(nbY).x;
+        prevTransfer.z = getTransfer(nbZ).w;
+        prevTransfer.w = getTransfer(nbW).z;
+        */
 
-        float outgoing = vsum(abs(transfer));
-        float incoming = vsum(abs(prevTransfer));
+        //transfer = vec4(1.0);
+        //prevTransfer = vec4(0.5);
+
+        if (waterFrameCount < 0.5) {
+            oldTransfer = vec4(0.0);
+            oldNBTransfer = vec4(0.0);
+        }
+
+        float outgoing = vsum(abs(oldTransfer));
+        float incoming = vsum(abs(oldNBTransfer));
         float speed = 1.0;
         float scale = 1.0;
 
@@ -264,7 +523,8 @@ void main() {
         }
         */
 
-        displacement.x += (vsum(transfer) - vsum(prevTransfer)) * speed * scale;
+        displacement.x += (vsum(oldTransfer) - vsum(oldNBTransfer)) * speed * scale;
+
         if (displacement.x > 0.0) {
             //displacement.x *= 0.9999;
         }
@@ -286,11 +546,15 @@ void main() {
             }
         }
 
-        vec4 diff = transfer - prevTransfer;
-        velocity = 0.5 * (transfer - prevTransfer);
+        //vec4 diff = transfer - prevTransfer;
+        vec4 newVelocity = 0.5 * (oldTransfer - oldNBTransfer) * scale;
+        //velocity = vec4(0.0);
+        if (waterFrameCount < 0.5) {
+            newVelocity = vec4(0.0);
+        }
 
         if (displacement.x < 0.0) {
-            velocity = vec4(0.0);
+            newVelocity = vec4(0.0);
         }
 
         //if (!isWater(groundHeight)) {
@@ -303,7 +567,76 @@ void main() {
           //velocity = -vec4(0.5);
         }
         */
+    //}
+
+    //if (waterShaderMode > 2.5 && waterShaderMode < 3.5) {
+    // That's the height difference (ground + water, neighbour ground + water)
+    vec4 delta = (nbg + nbs) - vec4(mine);
+
+    // Now make sure the difference is not greater than available water
+    checkDelta(delta.x, mine - groundHeight, nbs.x);
+    checkDelta(delta.y, mine - groundHeight, nbs.y);
+    checkDelta(delta.z, mine - groundHeight, nbs.z);
+    checkDelta(delta.w, mine - groundHeight, nbs.w);
+
+    //if (!isWater(groundHeight)) {
+        //velocity = -vec4(nbg - groundHeight) * 0.1;
+    //}
+
+    /*
+    vec4 nbsV = vec4(0.0);
+    nbsV.x = getVelocity(nbX).y;
+    nbsV.y = getVelocity(nbY).x;
+    nbsV.z = getVelocity(nbZ).w;
+    nbsV.w = getVelocity(nbW).z;
+    */
+
+    //velocity = 0.5 * (transfer - prevTransfer);
+    vec4 oldVelocity = texture2D(velocityTexture, uv);
+    vec4 newTransfer = oldVelocity - nbsV + 2.0 * 0.25 * 0.5 * delta + 0.0 * 0.25 * 0.5 * avg;
+    //vec4 newTransfer = oldVelocity - nbsV + 0.25 * 0.5 * delta + 0.0 * 0.25 * 0.5 * avg;
+    //transfer = 2.0 * 0.25 * 0.5 * delta + 0.0 * 0.25 * 0.5 * avg;
+    newTransfer = min(vec4(0.0), newTransfer);
+    //transfer = max(vec4(0.0), -transfer);
+
+    // What about the new prevTransfer?
+    //velocity = 0.5 * (transfer - prevTransfer);
+
+    //if (!isWater(groundHeight)) {
+        //transfer = -vec4(1.0 * max(0.0, mine - groundHeight));
+        //transfer = 0.0 * velocity - 0.0 * nbsV + 0.25 * 0.5 * delta + 0.0 * 0.25 * 0.5 * avg;
+        //transfer = min(vec4(0.0), transfer);
+    //}
+    if (displacement.x <= 0.0) {
+        newTransfer = vec4(0.0);
     }
+
+    /*
+    float c = 0.1 * mapYScale;
+    //vec4 nbDiff = -sign(nbg - groundHeight - 0.01 / mapHeight);
+    //transfer = min(vec4(0.0), transfer * nbDiff);
+    // transfer should be 0 if nbDiff is 1
+    //float water = groundHeight;
+    float water = mine;
+    if (nbg.x - water > c) {
+      transfer.x = 0.0;
+    }
+    if (nbg.y - water > c) {
+      transfer.y = 0.0;
+    }
+    if (nbg.z - water > c) {
+      transfer.z = 0.0;
+    }
+    if (nbg.w - water > c) {
+      transfer.w = 0.0;
+    }
+    */
+
+    // transfer is negative
+    //transfer = -vec4(0.0);
+    //prevTransfer = vec4(0.5);
+    displacement.z = setTransfer(newTransfer);
+    displacement.w = setVelocity(newVelocity);
 
     // TODO: scale pos
     float mapWidth = 64.0;
@@ -311,27 +644,27 @@ void main() {
 
     vec2 dx = vec2(1.0, 0.0) / resolution.xy;
     vec2 dy = vec2(0.0, 1.0) / resolution.xy;
-    float h1 = getDisplacement(nbX) + getGroundHeight(nbX);
-    float h2 = getDisplacement(nbZ) + getGroundHeight(nbZ);
+    float h1 = getDisplacement(nbY) + getGroundHeight(nbY);
+    float h2 = getDisplacement(nbW) + getGroundHeight(nbW);
     float hmfac = 0.2;
-    vec3 v1 = vec3(dx.x * mapWidth, (h1 - getDisplacement(displacement) - groundHeight) * hmfac , dx.y * mapHeight);
-    vec3 v2 = vec3(dy.x * mapWidth, (h2 - getDisplacement(displacement) - groundHeight) * hmfac, dy.y * mapHeight);
+    vec3 v1 = vec3(dx.x * mapWidth, (h1 - mine) * hmfac, dx.y * mapHeight);
+    vec3 v2 = vec3(dy.x * mapWidth, (h2 - mine) * hmfac, dy.y * mapHeight);
     vec3 normal = normalize(cross(v1, v2));
     normal.y = -normal.y;
 
     if (waterShaderMode > 4.5) {
         gl_FragColor = gaussian(texture);
     } else if (waterShaderMode > 3.5 && waterShaderMode < 4.5) {
-        gl_FragColor = velocity;
+        gl_FragColor = newVelocity;
     } else if (waterShaderMode > 2.5 && waterShaderMode < 3.5) {
-        gl_FragColor = transfer;
+        gl_FragColor = newTransfer;
     } else if (waterShaderMode > 1.5 && waterShaderMode < 2.5) {
         vec3 light = normalize(vec3(-1.0, 1.0, -1.0));
         // TODO: scale pos
         // TODO: set camera pos
         float C = 50.0;
         vec3 cameraPos = vec3(-C, C, -C);
-        vec3 pos = vec3((uv.x - 0.5) * mapWidth, vsum(displacement), (uv.y - 0.5) * mapHeight);
+        vec3 pos = vec3((uv.x - 0.5) * mapWidth, mine, (uv.y - 0.5) * mapHeight);
         vec3 incomingRay = normalize(pos * vec3(1.0, 1.0, 1.0) - cameraPos);
         vec3 refractionDir = refract(incomingRay, normal, 1.0 / 1.333);
         vec2 nuv =
@@ -345,6 +678,7 @@ void main() {
         gl_FragColor = vec4(normal, 1.0);
     } else {
         //displacement.y = displacement.x > 0.0 ? groundHeight + displacement.x : 0.0;
-        gl_FragColor = vec4(displacement);
+        //displacement.x += 0.01;
+        gl_FragColor = displacement;
     }
 }
