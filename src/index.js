@@ -10,6 +10,8 @@ const sets = require('./terrainSets.js').terrainSets;
 const heightMap = require('./heightMap.js').heightMap;
 const tiles = require('./tiles.js');
 const Stats = require('stats-js');
+const waterCommonShader = require('./shaders/waterCommon.shader');
+const waterInitShader = require('./shaders/waterInit.shader');
 const waterWavesShader = require('./shaders/waterWaves.shader');
 
 const config = {
@@ -119,12 +121,9 @@ const setupRenderer = function(width, height, renderOpts) {
 #ifdef USE_DISPLACEMENTMAP
   vec2 dmuv = vec2(transformed.zx * displacementBias + 0.5) * vec2(1.0, 1.0);
   if (abs(transformed.y) <= 1.0e-6) {
-    vec4 dtex = texture2D(displacementMap, dmuv);
-    //float disp = abs(dtex.x + dtex.y + dtex.z + dtex.w) * displacementScale;
-    //float disp = 0.25 * (dtex.x + dtex.y + dtex.z + dtex.w) * displacementScale;
-    //float disp = (dtex.x + dtex.y) * displacementScale;
-    float disp = dtex.y * displacementScale;
-    transformed.y += disp;
+    vec4 displacement = texture2D(displacementMap, dmuv);
+    float displacementValue = displacement.x > 0.0 ? displacement.x + displacement.y : 0.0;
+    transformed.y += displacementValue * displacementScale;
   }
 #endif
 `;
@@ -626,17 +625,24 @@ const setupWater = function(setup) {
   setup.waterRenderTargets = [setup.waterRenderTarget1, setup.waterRenderTarget2];
   setup.waterRenderTargetVelocities = [setup.waterRenderTargetVelocity1, setup.waterRenderTargetVelocity2];
 
-  const vertexShader = config.quadVertexShader;
+  setupQuad(setup, width, height, config.quadVertexShader, waterCommonShader + waterInitShader, setup.waterRenderTarget1.texture);
+  setup.waterInitQuadScene = setup.quadScene;
+  setup.waterInitQuadMaterial = setup.quadMaterial;
 
-  const fragmentShader = waterWavesShader;
-
-  setupQuad(setup, width, height, vertexShader, fragmentShader, setup.waterRenderTarget1.texture);
+  setupQuad(setup, width, height, config.quadVertexShader, waterCommonShader + waterWavesShader, setup.waterRenderTarget1.texture);
   setup.waterQuadScene = setup.quadScene;
   setup.waterQuadMaterial = setup.quadMaterial;
-  setup.waterQuadMaterial.uniforms.mapSizeInTiles = { value: new THREE.Vector2(config.mapWidthInTiles, config.mapHeightInTiles) };
+
   let waterFrameCount = 0;
   const material = setup.waterQuadMaterial;
+  const initMaterial = setup.waterInitQuadMaterial;
   const nullTexture = setup.terrainRenderTarget.texture;
+
+  initMaterial.uniforms.tileIndexTexture = { value: setup.tileIndexTexture };
+  initMaterial.uniforms.mapSizeInTiles   = { value: new THREE.Vector2(config.mapWidthInTiles, config.mapHeightInTiles) };
+  initMaterial.uniforms.mapYScale        = { value: config.mapYScale };
+
+  material.uniforms.mapSizeInTiles   = { value: new THREE.Vector2(config.mapWidthInTiles, config.mapHeightInTiles) };
   material.uniforms.tileIndexTexture = { value: setup.tileIndexTexture };
   material.uniforms.terrainTexture   = { value: setup.terrainRenderTarget.texture };
   material.uniforms.transferTexture  = { value: nullTexture };
@@ -644,6 +650,7 @@ const setupWater = function(setup) {
   material.uniforms.waterShaderMode  = { value: 0.0 };
   material.uniforms.waterFrameCount  = { value: waterFrameCount };
   material.uniforms.mapYScale        = { value: config.mapYScale };
+
   setup.updaters.push(function(frameCount) {
     material.uniforms.accumTime.value += material.uniforms.deltaTime.value;
     let fixedTime = 0.4; // milliseconds
@@ -651,6 +658,7 @@ const setupWater = function(setup) {
     let count = 0;
     //console.log(material.uniforms.accumTime.value);
     //while (waterFrameCount < 10000 || material.uniforms.accumTime.value >= fixedTime) {
+
     if (waterFrameCount < 0 || material.uniforms.accumTime.value >= fixedTime) {
       const rts = setup.waterRenderTargets;
       const wrt = rts[waterFrameCount % 2];
@@ -659,7 +667,12 @@ const setupWater = function(setup) {
       const wrtV = rtsV[waterFrameCount % 2];
       const wrtV2 = rtsV[(waterFrameCount + 1) % 2];
       //setup.renderer.setSize(wrt.width, wrt.height);
-      
+
+      if (waterFrameCount === 0) {
+        setup.renderer.setRenderTarget(wrt2);
+        setup.renderer.render(setup.waterInitQuadScene, setup.camera);
+      }
+
       material.uniforms.accumTime.value -= fixedTime;
       material.uniforms.accumTime.value = Math.max(0.0, material.uniforms.accumTime.value);
       material.uniforms.texture.value = wrt2.texture;

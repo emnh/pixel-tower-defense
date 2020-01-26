@@ -1,19 +1,3 @@
-uniform vec2 resolution;
-uniform vec2 tileSizeRelativeToTexture;
-uniform vec2 pixelSizeRelativeToTexture;
-uniform vec2 mapSizeInTiles;
-uniform sampler2D texture;
-uniform sampler2D tileIndexTexture;
-uniform sampler2D terrainTexture;
-uniform sampler2D transferTexture;
-uniform sampler2D velocityTexture;
-uniform float waterFrameCount;
-uniform float time;
-uniform float deltaTime;
-uniform float waterShaderMode;
-uniform float mapYScale;
-
-uniform float splashTime;
 
 float rand(vec2 co){
     return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
@@ -108,20 +92,6 @@ float getwaves(vec2 position){
     return w / ws;
 }
 
-float getGroundHeight(vec2 uv) {
-    // Outside map let height be:
-    if (abs(uv.x - 0.5) > 0.5 - 1.0e-2) {
-        return 0.0;
-    }
-    if (abs(uv.y - 0.5) > 0.5 - 1.0e-2) {
-        return 0.0;
-    }
-    vec2 tileIndexUV = floor(uv * mapSizeInTiles) / mapSizeInTiles;
-    vec4 tileIndex = texture2D(tileIndexTexture, tileIndexUV);
-    float groundHeight = tileIndex.z;
-    return mapYScale * groundHeight;
-}
-
 float checkDelta(float delta, float waterMine, float waterNB) {
     if (delta > 0.0) {
         delta = min(delta, max(0.0, waterMine));
@@ -146,24 +116,40 @@ float DecodeFloatRGBA(vec4 rgba) {
     return dot( rgba, vec4(1.0, 1.0/255.0, 1.0/65025.0, 1.0/16581375.0) );
 }
 
+float getGroundHeight(vec4 v) {
+    return v.y;
+}
+
 void main() {
     vec2 uv = gl_FragCoord.xy / resolution.xy;
 
-    float groundHeight = getGroundHeight(uv);
-
     vec4 displacement = texture2D(texture, uv);
+    float groundHeight = getGroundHeight(displacement);
     vec4 velocity = texture2D(velocityTexture, uv);
 
-    vec4 nbg = vec4(0.0);
+    /*
     nbg.x = getGroundHeight(uv + vec2(-1.0, 0.0) / resolution.xy);
     nbg.y = getGroundHeight(uv + vec2(1.0, 0.0) / resolution.xy);
     nbg.z = getGroundHeight(uv + vec2(0.0, -1.0) / resolution.xy);
     nbg.w = getGroundHeight(uv + vec2(0.0, 1.0) / resolution.xy);
+    */
+
+    vec4 nbX = texture2D(texture, uv + vec2(-1.0, 0.0) / resolution.xy);
+    vec4 nbY = texture2D(texture, uv + vec2(1.0, 0.0) / resolution.xy);
+    vec4 nbZ = texture2D(texture, uv + vec2(0.0, -1.0) / resolution.xy);
+    vec4 nbW = texture2D(texture, uv + vec2(0.0, 1.0) / resolution.xy);
+
     vec4 nbs = vec4(0.0);
-    nbs.x = getDisplacement(texture2D(texture, uv + vec2(-1.0, 0.0) / resolution.xy));
-    nbs.y = getDisplacement(texture2D(texture, uv + vec2(1.0, 0.0) / resolution.xy));
-    nbs.z = getDisplacement(texture2D(texture, uv + vec2(0.0, -1.0) / resolution.xy));
-    nbs.w = getDisplacement(texture2D(texture, uv + vec2(0.0, 1.0) / resolution.xy));
+    nbs.x = getDisplacement(nbX);
+    nbs.y = getDisplacement(nbY);
+    nbs.z = getDisplacement(nbZ);
+    nbs.w = getDisplacement(nbW);
+
+    vec4 nbg = vec4(0.0);
+    nbg.x = getGroundHeight(nbX);
+    nbg.y = getGroundHeight(nbY);
+    nbg.z = getGroundHeight(nbZ);
+    nbg.w = getGroundHeight(nbW);
 
     float mine = groundHeight + getDisplacement(displacement);
     float avg = 0.25 * ((nbs.x - mine) + (nbs.y - mine) + (nbs.z - mine) + (nbs.w - mine));
@@ -307,11 +293,11 @@ void main() {
             velocity = vec4(0.0);
         }
 
-        if (!isWater(groundHeight)) {
+        //if (!isWater(groundHeight)) {
             //velocity += vec4(nbg - groundHeight) * 0.001;
             //velocity = vec4(0.0);
             //velocity *= 0.9;
-        }
+        //}
         /*
         if (getDisplacement(displacement) < groundHeight) {
           //velocity = -vec4(0.5);
@@ -325,8 +311,8 @@ void main() {
 
     vec2 dx = vec2(1.0, 0.0) / resolution.xy;
     vec2 dy = vec2(0.0, 1.0) / resolution.xy;
-    float h1 = getDisplacement(texture2D(texture, uv + dx)) + getGroundHeight(uv + dx);
-    float h2 = getDisplacement(texture2D(texture, uv + dy)) + getGroundHeight(uv + dy);
+    float h1 = getDisplacement(nbX) + getGroundHeight(nbX);
+    float h2 = getDisplacement(nbZ) + getGroundHeight(nbZ);
     float hmfac = 0.2;
     vec3 v1 = vec3(dx.x * mapWidth, (h1 - getDisplacement(displacement) - groundHeight) * hmfac , dx.y * mapHeight);
     vec3 v2 = vec3(dy.x * mapWidth, (h2 - getDisplacement(displacement) - groundHeight) * hmfac, dy.y * mapHeight);
@@ -358,7 +344,7 @@ void main() {
     } else if (waterShaderMode > 0.5 && waterShaderMode < 1.5) {
         gl_FragColor = vec4(normal, 1.0);
     } else {
-        displacement.y = displacement.x > 0.0 ? groundHeight + displacement.x : 0.0;
+        //displacement.y = displacement.x > 0.0 ? groundHeight + displacement.x : 0.0;
         gl_FragColor = vec4(displacement);
     }
 }
