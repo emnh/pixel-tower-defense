@@ -23,6 +23,7 @@
     "@babel/core": "^7.8.3",
     "@babel/preset-env": "^7.8.3",
     "base64-img": "^1.0.4",
+    "glsl-shader-loader": "^0.1.6",
     "image-hash": "^3.5.1",
     "image-pixels": "^2.2.2",
     "seedrandom": "^3.0.5",

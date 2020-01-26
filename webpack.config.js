@@ -12,8 +12,19 @@ module.exports = {
     index: 'default.html',
     contentBase: path.join(__dirname, "."),
     compress: true,
-    port: 8080
+    port: 8070
   },
   plugins: [
-  ]
+  ],
+  module: {
+    rules: [{
+      test: /\.(frag|vert|glsl|shader)$/,
+      use: [
+        {
+          loader: 'glsl-shader-loader',
+          options: {}
+        }
+      ]
+    }]
+  }
 };
