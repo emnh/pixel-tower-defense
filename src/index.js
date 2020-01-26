@@ -711,14 +711,19 @@ const setupWater = function(setup) {
     const wrt2 = rts[(waterFrameCount + 1) % 2];
 
     // Gaussian blur of displacement
-    // Depends on transfer
+    // Depends on displacement
+    /*
     material.uniforms.texture.value = wrt2.texture;
     material.uniforms.waterShaderMode.value = 5.0;
     setup.renderer.setRenderTarget(wrt);
     setup.renderer.render(setup.waterQuadScene, setup.camera);
+    */
+
+    // Last render target was wrt, so with waterFrameCount++ it will be wrt2
+    const lastRenderTarget = wrt2;
 
     // Render normals
-    material.uniforms.texture.value = wrt.texture;
+    material.uniforms.texture.value = lastRenderTarget.texture;
     material.uniforms.waterShaderMode.value = 1.0;
     setup.renderer.setRenderTarget(setup.waterNormalsRenderTarget);
     setup.renderer.render(setup.waterQuadScene, setup.camera);
@@ -729,8 +734,7 @@ const setupWater = function(setup) {
     setup.renderer.render(setup.waterQuadScene, setup.camera);
 
     // TODO: maybe relocate this line
-    setup.terrainMeshWater.material.displacementMap = wrt.texture;
-    //setup.terrainMeshWater.material.lightMap = setup.waterNormalsRenderTarget.texture;
+    setup.terrainMeshWater.material.displacementMap = lastRenderTarget.texture;
     setup.terrainMeshWater.material.normalMap = setup.waterNormalsRenderTarget.texture;
     setup.terrainMeshWater.material.normalMapType = THREE.ObjectSpaceNormalMap;
     setup.terrainMeshWater.material.map = setup.waterColorRenderTarget.texture;
