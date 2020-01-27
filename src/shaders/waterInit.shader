@@ -16,5 +16,11 @@ float getGroundHeight(vec2 uv) {
 
 void main() {
     vec2 uv = gl_FragCoord.xy / resolution.xy;
-    gl_FragColor.y = getGroundHeight(uv);
+    float height = getGroundHeight(uv);
+    WaterGroundTransferVelocity wgtv;
+    wgtv.water = 0.0;
+    wgtv.ground = height;
+    wgtv.velocity = vec4(0.0);
+    wgtv.transfer = vec4(0.0);
+    gl_FragColor = pack(wgtv);
 }

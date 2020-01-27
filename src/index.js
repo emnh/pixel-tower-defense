@@ -10,6 +10,7 @@ const sets = require('./terrainSets.js').terrainSets;
 const heightMap = require('./heightMap.js').heightMap;
 const tiles = require('./tiles.js');
 const Stats = require('stats-js');
+const waterUniformsShader = require('./shaders/waterUniforms.shader');
 const waterCommonShader = require('./shaders/waterCommon.shader');
 const waterInitShader = require('./shaders/waterInit.shader');
 const waterWavesShader = require('./shaders/waterWaves.shader');
@@ -117,12 +118,14 @@ const setupRenderer = function(width, height, renderOpts) {
   renderer.localClippingEnabled = true;
 
   // We want displacementMap to affect vertex positions directly, instead of using the normal
+  THREE.ShaderChunk.common += waterCommonShader;
   THREE.ShaderChunk.displacementmap_vertex = `
 #ifdef USE_DISPLACEMENTMAP
   vec2 dmuv = vec2(transformed.zx * displacementBias + 0.5) * vec2(1.0, 1.0);
   if (abs(transformed.y) <= 1.0e-6) {
-    vec4 displacement = texture2D(displacementMap, dmuv);
-    float displacementValue = displacement.x > 0.0 ? displacement.x + displacement.y : 0.0;
+    WaterGroundTransferVelocity wgtv = unpack(texture2D(displacementMap, dmuv));
+    float displacementValue = getFinalDisplacement(wgtv);
+    //float displacementValue = displacement.x > 0.0 ? displacement.x + displacement.y : 0.0;
     transformed.y += displacementValue * displacementScale;
   }
 #endif
@@ -622,14 +625,19 @@ const setupWater = function(setup) {
   setDefaultTextureProperties(setup.waterRenderTargetVelocity2.texture);
   setDefaultTextureProperties(setup.waterRenderTargetTransfer.texture);
   setDefaultTextureProperties(setup.waterNormalsRenderTarget.texture);
+  setDefaultTextureProperties(setup.waterColorRenderTarget.texture);
   setup.waterRenderTargets = [setup.waterRenderTarget1, setup.waterRenderTarget2];
   setup.waterRenderTargetVelocities = [setup.waterRenderTargetVelocity1, setup.waterRenderTargetVelocity2];
 
-  setupQuad(setup, width, height, config.quadVertexShader, waterCommonShader + waterInitShader, setup.waterRenderTarget1.texture);
+  setupQuad(
+      setup, width, height, config.quadVertexShader,
+      waterUniformsShader + waterCommonShader + waterInitShader, setup.waterRenderTarget1.texture);
   setup.waterInitQuadScene = setup.quadScene;
   setup.waterInitQuadMaterial = setup.quadMaterial;
 
-  setupQuad(setup, width, height, config.quadVertexShader, waterCommonShader + waterWavesShader, setup.waterRenderTarget1.texture);
+  setupQuad(
+      setup, width, height, config.quadVertexShader,
+      waterUniformsShader + waterCommonShader + waterWavesShader, setup.waterRenderTarget1.texture);
   setup.waterQuadScene = setup.quadScene;
   setup.waterQuadMaterial = setup.quadMaterial;
 
@@ -672,6 +680,10 @@ const setupWater = function(setup) {
         material.uniforms.texture.value = wrt2.texture;
         setup.renderer.setRenderTarget(wrt);
         setup.renderer.render(setup.waterInitQuadScene, setup.camera);
+
+        material.uniforms.texture.value = wrt.texture;
+        setup.renderer.setRenderTarget(wrt2);
+        setup.renderer.render(setup.waterInitQuadScene, setup.camera);
       }
 
       material.uniforms.accumTime.value -= fixedTime;
@@ -680,11 +692,12 @@ const setupWater = function(setup) {
       material.uniforms.velocityTexture.value = wrtV.texture;
 
       // Render transfer
+      /*
       material.uniforms.transferTexture.value = nullTexture;
       material.uniforms.waterShaderMode.value = 3.0;
       setup.renderer.setRenderTarget(setup.waterRenderTargetTransfer);
       setup.renderer.render(setup.waterQuadScene, setup.camera);
-
+      */
 
       // Render displacement
       // Depends on transfer
@@ -700,7 +713,6 @@ const setupWater = function(setup) {
       material.uniforms.waterShaderMode.value = 4.0;
       setup.renderer.setRenderTarget(wrtV2);
       setup.renderer.render(setup.waterQuadScene, setup.camera);
-
 
       material.uniforms.transferTexture.value = nullTexture;
 
