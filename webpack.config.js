@@ -12,7 +12,7 @@ module.exports = {
     index: 'default.html',
     contentBase: path.join(__dirname, "."),
     compress: true,
-    port: 8070
+    port: 8080
   },
   plugins: [
   ],
